@@ -1,0 +1,21 @@
+# Nexdev runtime state
+.nexdev/
+
+# Local environment and secrets
+.env
+.env.*
+*.pem
+*_rsa
+*_ed25519
+
+# Build outputs
+bin/
+dist/
+build/
+*.test
+*.out
+
+# Logs and temp files
+*.log
+tmp/
+temp/
