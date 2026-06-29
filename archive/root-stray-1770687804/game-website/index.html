@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Arcade</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Game Arcade</h1>
+        </header>
+        
+        <main>
+            <div id="menu-container">
+                <h2>Select a Game</h2>
+                <div id="game-list" class="game-list"></div>
+            </div>
+            
+            <div id="game-container" class="hidden">
+                <div id="game-header">
+                    <h2 id="game-title"></h2>
+                    <button id="back-button">Back to Menu</button>
+                    <button id="pause-button">Pause</button>
+                    <button id="restart-button">Restart</button>
+                </div>
+                <div id="game-info">
+                    <div id="score-display">Score: <span id="score">0</span></div>
+                    <div id="highscore-display">High Score: <span id="highscore">0</span></div>
+                </div>
+                <canvas id="game-canvas" width="800" height="600"></canvas>
+                <div id="game-controls">
+                    <p>Use Arrow Keys or WASD to control the game</p>
+                    <p>Press ESC to pause</p>
+                </div>
+            </div>
+            
+            <div id="pause-overlay" class="overlay hidden">
+                <h2>Paused</h2>
+                <button id="resume-button">Resume</button>
+                <button id="quit-button">Quit Game</button>
+            </div>
+            
+            <div id="gameover-overlay" class="overlay hidden">
+                <h2>Game Over</h2>
+                <div id="final-score">Final Score: 0</div>
+                <button id="playagain-button">Play Again</button>
+                <button id="gameover-quit-button">Quit</button>
+            </div>
+        </main>
+        
+        <footer>
+            <p>Game Arcade - 10 Playable Games</p>
+        </footer>
+    </div>
+    
+    <script src="js/config.js"></script>
+    <script src="js/input.js"></script>
+    <script src="js/score.js"></script>
+    <script src="js/engine.js"></script>
+    <script src="js/games.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

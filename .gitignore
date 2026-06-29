@@ -1,6 +1,9 @@
 # Nexdev runtime state
 .nexdev/
 
+# Imported geoffrussy runtime state
+.geoffrussy/
+
 # Local environment and secrets
 .env
 .env.*
@@ -14,8 +17,31 @@ dist/
 build/
 *.test
 *.out
+coverage.txt
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go workspace and dependencies
+go.work
+vendor/
 
 # Logs and temp files
 *.log
 tmp/
 temp/
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Python artifacts
+__pycache__/
+*.pyc

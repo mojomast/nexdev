@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./bin/geoffrussy:*)",
+      "Bash(make build:*)",
+      "Bash(../bin/geoffrussy init:*)",
+      "Bash(/home/mojo/projects/geoffrussy/geoffrussy/bin/geoffrussy init:*)",
+      "Bash(../bin/geoffrussy interview:*)",
+      "Bash(python3:*)",
+      "Bash(tee:*)"
+    ]
+  }
+}

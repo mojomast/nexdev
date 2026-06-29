@@ -30,6 +30,8 @@ Operate as an orchestrator:
 - Require workers to read relevant spec sections, `DEVPLAN.md`, `WORKER_PROTOCOL.md`, and docs before editing.
 - Require tests and docs with every behavior change.
 - Require every worker to update `DEVPLAN.md` progress and return a handoff note.
+- Require every worker handoff to include updated suggested next actions, including the next recommended task, dependencies, blockers, and any documentation follow-up.
+- Whenever documentation is updated, require the worker to update the relevant "next actions" or "next recommended task" guidance in `DEVPLAN.md`, the changed doc, or the handoff so the next orchestrator has current instructions.
 - Spawn a Spec Management Subagent after every major milestone.
 - Spawn specialized Deblocker Subagents when blocked.
 - Do not allow workers to guess or hack around blockers.
@@ -75,6 +77,7 @@ Can run in parallel with contract workers after reading their handoffs.
 First orchestrator checkpoint:
 - Wait for Foundation Worker to finish M0 bootstrap.
 - Inspect worker handoff, tests run, and files changed.
+- Confirm the handoff includes current suggested next actions before launching follow-up work.
 - If geoffrussy was not imported, spawn Spec Management Subagent before proceeding.
 - Then launch M1 contract workers in parallel with strict file ownership.
 
@@ -83,5 +86,8 @@ If any worker hits a blocker, it must stop and return a blocker handoff with exa
 
 Completion target:
 Work milestone by milestone through M19. The project is complete only when all devplan milestones are complete, every spec requirement is implemented or explicitly deferred in `SPEC.md`, tests pass, docs match behavior, spec coverage is complete, fake-provider E2E passes, security checks pass, API/SSE/auth contracts are tested, and no unresolved blockers remain.
+
+Handoff rule:
+When the user asks for a handoff, or when a worker updates docs, ensure suggested next actions are updated at the same time. The next actions must be specific, current, and tied to `DEVPLAN.md` task IDs or milestone IDs where possible.
 
 Make it go brrrr, but make it merge cleanly.
