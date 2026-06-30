@@ -1,6 +1,6 @@
 # Nexdev Testing Strategy
 
-**Status:** M0-M17 assigned scopes are documented; M18 reconciles current gates, skips, and release-readiness gaps.
+**Status:** Final stabilization reflects implemented behavior through TASK-10 and keeps explicit remaining deferrals visible.
 **Canonical requirements:** `SPEC.md` section 24 plus security and acceptance criteria sections.  
 **Execution model:** Tests are created alongside implementation by domain workers.
 
@@ -34,13 +34,13 @@ Current valid commands include:
 - `./scripts/release_check.sh` when `govulncheck` is installed on `PATH`
 - `./scripts/real_provider_smoke.sh` skips by default unless explicit real-provider env gates are set.
 
-Current documented verification commands through M17:
+Current documented verification commands through final stabilization:
 - `go test ./...`
 - `go vet ./...`
 - `go mod verify`
 - `./scripts/e2e_fake_provider.sh`
 
-Release/full-gate commands still require M19 verification in the target environment:
+Release/full-gate commands verified in the target environment:
 - `go test -race ./...`
 - `govulncheck ./...`
 
@@ -144,7 +144,7 @@ Current first-wave coverage:
 - Verifies event contract version, required event names, and event sources.
 
 Current codegen status:
-- Generated OpenAPI codegen remains deferred; `api/openapi.yaml` is the machine contract until the owning API/codegen task creates generated types and drift checks.
+- Generated OpenAPI types are checked in under `api/generated/nexdev_api.gen.go`, and contract tests can run the generated-code drift check.
 
 Required checks:
 - OpenAPI file validates.
@@ -186,7 +186,7 @@ Current M1-C5 coverage:
 
 Current M3 event repository coverage:
 - `go test ./internal/state` covers persisted event load with contract version and UTC RFC3339Nano timestamp behavior, monotonic per-run sequence allocation, independent sequences across runs, replay after sequence, replay after event ID for `Last-Event-ID` mapping, unsafe caller-provided sequence rejection, duplicate event ID failure, and concurrent publishers on one run.
-- M10 SSE tests still need to cover persist-before-broadcast at the publisher boundary, HTTP `Last-Event-ID` reconnect behavior, heartbeat frames, bounded client queues, and slow-client overflow handling.
+- Current control-plane and CLI coverage covers persist-before-broadcast at the publisher boundary, HTTP `Last-Event-ID` reconnect behavior, heartbeat frames, bounded subscriber queues, remote/local `events --follow` reconnect behavior, and full HTTP slow-reader stress under the race gate.
 
 Current M3 run/stage/artifact repository coverage:
 - `go test ./internal/state` covers run create/read/status/current-stage/complete/cancel/list behavior, UTC RFC3339Nano timestamp normalization, metadata JSON round-trip, stable run ordering, and run foreign-key enforcement.
@@ -224,7 +224,8 @@ Current M12 CLI/app coverage:
 - `go test ./internal/app` covers project-local runtime opening, `.nexdev/run/project.lock` acquire/release for server lifecycle, project row creation, non-loopback/no-auth startup rejection through config/app validation, and hash-only token persistence.
 - `go test ./internal/cli` covers M12 command registration, root command identity, token create JSON output, and control mutation commands refusing to bypass the HTTP control-plane service when `--control-url` is absent.
 - Current M16 CLI/app coverage: `go test ./internal/app ./internal/cli` covers full local `run --fake-provider --no-tui --json` completion, JSON output shape, artifacts/events presence, and fake-provider opt-in wiring.
-- Remaining CLI coverage: `serve` live listener smoke, remote `events --follow` SSE client, credentialed real-provider provider-test execution in an explicitly gated environment, and standalone verify/handoff commands.
+- Current final CLI/app coverage adds `events --follow` for local in-process and remote SSE streams with `Last-Event-ID` reconnect support.
+- Remaining CLI coverage: credentialed real-provider provider-test execution in an explicitly gated environment and standalone artifact content opening.
 
 ### 3.8 Fake Provider and Fake Worker Tests
 
@@ -364,7 +365,8 @@ Current fixture test command:
 - Current M2 baseline coverage: `go test ./internal/config ./internal/safety` validates typed Nexdev defaults/profile/auth-auto/remote-bind/unknown-top-level-key behavior and path traversal, absolute escape, `.git`, symlink escape, and basic deny-glob rejection.
 - Current M2 security baseline coverage: `go test ./internal/safety` validates secret redaction, `.env` assignment scrubbing, bearer token scrubbing, private key scrubbing, prompt-injection warning detection, default deny for shell/network, write deny globs, and wildcard shell rejection outside `dev`.
 - Current M15 security hardening coverage: `go test ./internal/safety` validates task expected-file and file-lock write checks; `go test ./internal/git` validates stale-lock safe failure without automatic deletion; `go test ./internal/controlplane` validates auth throttling/audit and redacted API errors; `go test ./internal/pipeline` validates artifact/prompt redaction, Hivemind `security_warning` events, and cost preflight denial before provider calls; `go test ./internal/observability` validates cost guard budget/unknown-price denial.
-- Remaining config/path/security coverage: full global/project/env/flag precedence wiring, unsafe CORS/profile combinations, tool policy file loading, real verify command execution/output caps/controlled env, MCP poisoning fixtures beyond current descriptor/input checks, and slow-client overflow stress.
+- Current final verify/security coverage adds policy-gated verify command execution with exact allow checks, output caps, timeouts, controlled environment, cancellation, and bounded repair reruns.
+- Remaining config/path/security coverage: full global/project/env/flag precedence wiring, unsafe CORS/profile combinations, MCP poisoning fixtures beyond current descriptor/input checks, and full real-provider pipeline execution.
 
 ### State
 
@@ -404,7 +406,8 @@ Current fixture test command:
 - Current M6 design coverage: `go test ./internal/pipeline` covers provider-backed design generation through `provider.SlotDesign`, trusted/untrusted prompt sections, correction loop prompt feedback, max-iteration `BlockedError` for unresolved high-severity actionable findings, invalid structured-output repair, required section validation, `.nexdev/artifacts/design_draft.md` writing/indexing, and `PipelineStage`/`StageOutputter` resume/output behavior.
 - Current M6 hivemind/validate coverage: `go test ./internal/pipeline` covers provider-backed hivemind voice and synthesis calls through `provider.SlotHivemindVoice` and `provider.SlotHivemindSynthesis`, configured sequential and bounded-parallel voice behavior, security-voice prompt focus, revise/block `BlockedError` behavior after artifact persistence, invalid structured-output repair, `.nexdev/artifacts/design_review.json` writing/indexing, provider-backed validation through `provider.SlotValidate`, pass/warn/block behavior, conflict/blocker default blocking, `.nexdev/artifacts/validation_report.json` and `.nexdev/artifacts/validated_design.md` writing/indexing, and `PipelineStage`/`StageOutputter` resume/output behavior.
 - Current M16 pipeline coverage: `go test ./internal/pipeline` covers verify/handoff artifacts, changed-file manifest generation, verify events, denied-command reporting, run summary, and handoff redaction. `go test ./internal/app` covers runner/app wiring that passes stage outputs through a full fake-provider run from `repo_analyze` to `complete`.
-- Remaining M6/M7/M16 pipeline coverage: shared artifact helper and `artifact_updated` events, state repositories for `hivemind_results` and `validate_results`, schema validation for later stage artifacts, and real policy-gated verify repair behavior.
+- Current final pipeline coverage adds policy-gated verify execution, output caps, timeouts, controlled environment, repair reruns, run-summary cost aggregation, and git-diff changed-file detection.
+- Remaining M6/M7/M16 pipeline coverage: shared artifact helper and `artifact_updated` events, state repositories for `hivemind_results` and `validate_results`, schema validation for later stage artifacts, and the shared changed-file artifact `old_path` extension.
 
 ### Review and Planning
 
@@ -427,7 +430,7 @@ Current fixture test command:
 - Pause/resume/cancel are context-aware.
 - Executor integration loads `nexdev_tasks`, updates task status through the state repository, and writes blockers to `nexdev_blockers` rather than legacy geoffrussy task/blocker tables.
 - Current M8 coverage: `go test ./internal/executor ./internal/pipeline` covers fake task completion with persisted status/events, expected-file write allowance, unexpected write rejection, task-blocker event mapping plus `nexdev_blockers` creation, pause/resume/skip/cancel/current-task behavior, steering persistence into prompt context, and develop-stage review approval marker enforcement.
-- Remaining executor coverage: richer steering context assembled from requirements/design/repo artifacts, control-plane handler integration, project-lock lifecycle wiring, real worker/worktree strategy tests, shell/network policy enforcement if those tools are later implemented, and changed-file manifest/report population.
+- Remaining executor coverage: real worker/worktree strategy tests and full real-provider pipeline execution. Verify-stage shell execution is implemented only through the policy-gated verify runner; general generated-task shell/network execution remains outside the executor surface.
 
 ### Detour
 
@@ -451,8 +454,9 @@ Current fixture test command:
 - Current M10 coverage: `go test ./internal/controlplane` covers loopback/no-auth health and status, startup rejection for non-loopback/no-auth, bearer-token observer/operator role behavior, forbidden observer mutation, SSE persisted replay with `Last-Event-ID`, SSE frame shape/no `[DONE]`, and detour route delegation with persisted `detour_created` event evidence.
 - Current M19 release-readiness coverage adds a control-plane publisher slow-client test that verifies bounded subscriber queues close an unread subscriber on overflow without unbounded memory growth.
 - Current M15 control-plane coverage adds deterministic auth rate limiting with `429` responses and `auth_throttle` audit records plus redacted error response details.
-- Remaining M10/M12/M15 coverage: slow-client overflow event behavior under stress, full OpenAPI response validation, task/config/provider mutation route service wiring, and credentialed provider-test execution in an explicitly gated environment.
-- Current M12 app/CLI coverage adds project-local `nexdev serve` lifecycle wiring, project lock acquire/release, token create/list/revoke command paths, and CLI mutation error handling. Current M17 control-plane coverage adds provider-test route delegation and default service-unavailable behavior when the tester is not wired. Remaining M12/M15 coverage: live listener smoke, remote SSE follow, slow-client overflow stress, and full OpenAPI response validation.
+- Current final control-plane coverage adds full HTTP slow-reader SSE stress coverage that passes under the race gate.
+- Remaining M10/M12/M15 coverage: full OpenAPI response validation/server binding, task/config mutation route service wiring, and credentialed provider-test execution in an explicitly gated environment.
+- Current M12 app/CLI coverage adds project-local `nexdev serve` lifecycle wiring, project lock acquire/release, token create/list/revoke command paths, and CLI mutation error handling. Current M17 control-plane coverage adds provider-test route delegation and default service-unavailable behavior when the tester is not wired. Final CLI coverage adds local/remote `events --follow` with reconnect. Remaining M12/M15 coverage: full OpenAPI response validation/server binding and artifact content opening.
 
 ### Observability
 
@@ -463,7 +467,8 @@ Current fixture test command:
 - Current M2 coverage: `go test ./internal/observability` validates redaction for messages, attrs, grouped/with attrs, level filtering, JSON/text construction, level parsing, and required field helper keys.
 - Current M14 coverage: `go test ./internal/observability` validates disabled-by-default OTel behavior, endpoint validation when enabled, correlation-aware provider usage recording, cost estimation, cost ledger persistence, audit record persistence, and metadata redaction. `go test ./internal/state` validates audit/cost migrations and repositories plus event-payload redaction before persistence. `go test ./internal/provider` validates structured-call usage recorder hooks and redacted raw-response handoff. `go test ./internal/controlplane` validates auth failure/forbidden/operator control audit records and recursive error-detail redaction coverage through existing error paths.
 - Current M15 observability/security coverage adds cost guard preflight denial before Hivemind parallel/provider launches and no-secret-leak assertions across artifact/prompt/API-error/audit/cost/event-backed boundaries represented in owned package tests.
-- Remaining M14/M15 coverage: full fake-provider E2E no-secret-leak fixtures, run-summary cost aggregation, slow-client overflow stress, and optional OTel exporter tests that remain disabled and network-free by default.
+- Current final observability coverage adds run-summary cost aggregation tests and HTTP slow-reader SSE stress coverage.
+- Remaining M14/M15 coverage: optional OTel exporter tests that remain disabled and network-free by default.
 
 ### MCP
 
@@ -518,7 +523,9 @@ Release gate:
 - Docs complete.
 - Spec coverage complete.
 
-Known remaining release-gate gaps after M17:
-- `govulncheck` must be installed and runnable in the release environment with the fixed module-pinned Go toolchain.
-- Real-provider smoke remains optional, credential-gated, and excluded from normal CI.
-- Broader hostile security fixture coverage, OpenAPI generated-code drift checks, and standalone verify/handoff command smoke remain release follow-up work.
+Known remaining explicit deferrals after final stabilization:
+- Full real-provider pipeline execution remains deferred; real-provider smoke is optional, credential-gated, spend-capped, and excluded from normal CI.
+- Web UI remains deferred.
+- Artifact content opening remains deferred.
+- Full OpenAPI response validation/server binding remains deferred; generated-code drift checks are implemented.
+- The shared changed-file artifact JSON does not yet expose the internally parsed rename `old_path` field.

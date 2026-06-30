@@ -35,14 +35,15 @@ Operate as an orchestrator:
 - Spawn a Spec Management Subagent after every major milestone.
 - Spawn specialized Deblocker Subagents when blocked.
 - Do not allow workers to guess or hack around blockers.
-- Stop only when `DEVPLAN.md` and `SPEC.md` are fully complete or when an unrecoverable orchestrator decision is required.
+- Stop only when the assigned stabilization or follow-up goal is fully handled, or when an unrecoverable orchestrator decision is required.
 
-Current repository context from planning:
-- At planning time, the repository was greenfield and contained only `SPEC.md` plus planning docs.
-- The canonical spec requires a Go 1.24+ implementation and repository strategy of forking/importing `mojomast/geoffrussy`.
-- Preserve root `SPEC.md` and planning docs during bootstrap.
+Current repository context after final stabilization:
+- M0-M19 plus TASK-01 through TASK-10 are implemented or verified at their assigned scope.
+- The module is `github.com/mojomast/nexdev` and `go.mod` declares Go `1.26.4` with no redundant matching `toolchain` line.
+- The final implemented set includes fake-provider E2E, control plane, SSE follow, policy-gated verify runner, generated OpenAPI types and drift tests, cost summary, git-diff changed files, stale-lock recovery policy, hostile security fixtures, SSE stress coverage, and CLI cleanup.
+- Explicit deferrals remain: full real-provider pipeline execution, web UI assets, artifact content opening, full OpenAPI response validation/server binding, and exposing git rename `old_path` in shared changed-file artifact JSON.
 
-Recommended first wave of builder subagents:
+Historical first wave of builder subagents:
 
 1. Foundation Worker
 Goal: Execute M0 bootstrap. Determine whether `mojomast/geoffrussy` can be forked/imported into this repository, preserve planning docs, initialize/confirm Git and Go module, and establish baseline test command.
@@ -74,7 +75,7 @@ Goal: Keep `README.md`, `docs/architecture.md`, and `docs/contracts.md` aligned 
 Owned files: docs only.
 Can run in parallel with contract workers after reading their handoffs.
 
-First orchestrator checkpoint:
+Historical first orchestrator checkpoint:
 - Wait for Foundation Worker to finish M0 bootstrap.
 - Inspect worker handoff, tests run, and files changed.
 - Confirm the handoff includes current suggested next actions before launching follow-up work.
@@ -85,7 +86,7 @@ Blocker workflow:
 If any worker hits a blocker, it must stop and return a blocker handoff with exact error/output and reproduction steps. Spawn the specialized Deblocker Subagent named in `DEVPLAN.md`. Continue only after accepting the deblocker report.
 
 Completion target:
-Work milestone by milestone through M19. The project is complete only when all devplan milestones are complete, every spec requirement is implemented or explicitly deferred in `SPEC.md`, tests pass, docs match behavior, spec coverage is complete, fake-provider E2E passes, security checks pass, API/SSE/auth contracts are tested, and no unresolved blockers remain.
+Keep final stabilization green. Run release gates after behavior changes, keep docs aligned with `SPEC.md`, and do not reopen implemented TASK-01 through TASK-10 items unless a regression is found.
 
 Handoff rule:
 When the user asks for a handoff, or when a worker updates docs, ensure suggested next actions are updated at the same time. The next actions must be specific, current, and tied to `DEVPLAN.md` task IDs or milestone IDs where possible.

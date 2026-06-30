@@ -189,14 +189,13 @@ Repository identity:
 - Module path is `github.com/mojomast/nexdev`; current `go.mod` declares Go 1.26.4 and intentionally has no redundant matching `toolchain` line.
 - Existing files at planning start: `SPEC.md` plus planning docs from the planning session.
 
-Missing implementation structure:
-- `go.mod` and `go.sum` now exist.
-- `cmd/nexdev/main.go` now exists as a minimal wrapper over imported CLI wiring.
-- Imported geoffrussy `internal/` packages now exist, including provider, state, navigation, executor, git, CLI/TUI dependencies, and tests.
-- No `api/openapi.yaml`.
-- Imported geoffrussy tests exist and pass under the Nexdev module path.
-- No CI.
-- No scripts.
+Implementation structure:
+- `go.mod` and `go.sum` exist for module `github.com/mojomast/nexdev` with Go `1.26.4`.
+- `cmd/nexdev/main.go` is the Nexdev CLI entrypoint over imported and Nexdev-specific CLI wiring.
+- Imported geoffrussy `internal/` packages exist, including provider, state, navigation, executor, git, CLI/TUI dependencies, and tests.
+- `api/openapi.yaml` and checked-in generated API types under `api/generated/nexdev_api.gen.go` exist.
+- Imported geoffrussy tests and Nexdev tests pass under the Nexdev module path.
+- CI/release workflows and scripts exist, including `scripts/e2e_fake_provider.sh`, `scripts/real_provider_smoke.sh`, and `scripts/release_check.sh`.
 - Planning docs remain present and `docs/architecture.md` records the base strategy.
 
 Repository readiness conclusion:
@@ -277,8 +276,8 @@ Contract risks:
 ### 1.5 Testing Scout Report
 
 Current baseline:
-- No runnable test commands exist yet because the repo has no Go module.
-- All commands below become required after bootstrap unless marked recommended.
+- The repo is a Go module and the documented test/release commands are runnable in prepared environments.
+- The commands below remain required release gates unless marked recommended or optional.
 
 Required commands after implementation exists:
 - `go test ./...`
@@ -405,7 +404,7 @@ Spec update rule:
 
 ## 4. Repository Bootstrap Decision Gate
 
-Current repo state is greenfield planning-only. Before implementation, the development-session orchestrator must choose one path.
+Historical bootstrap decision gate: the repo was greenfield planning-only before M0. M0 selected the geoffrussy import path and preserved the planning artifacts.
 
 Default decision:
 - Fork or import `mojomast/geoffrussy` into this repository, preserving root `SPEC.md` and this plan.
@@ -1101,7 +1100,7 @@ Status: M2 project lock helper verified on 2026-06-30. Stage/task commit helpers
 Evidence for M2-PROJECT-LOCK:
 - `internal/git/project_lock.go` defines `.nexdev/run/project.lock` path resolution through `internal/safety.PathSanitizer`.
 - `AcquireProjectLock` creates the runtime parent directory, atomically creates the lock file with `O_EXCL`, writes pid and UTC timestamp metadata, rejects a second acquisition while held, and removes the lock on release.
-- Stale lock detection is intentionally deferred; existing lock files are treated as held until M15 hardening defines recovery behavior.
+- Stale lock detection was deferred at M2 and implemented by later hardening: live pids keep the lock held, dead pids allow safe removal and retry, and malformed/unreadable metadata fails safe for manual recovery.
 - Evidence commands: `go test ./internal/git` passed; `go test ./...` passed.
 
 Next action guidance:
@@ -1441,7 +1440,7 @@ Historical next action guidance:
 - Still relevant: run M1 spec-management before broad M2-M5 implementation to classify the Provider C6 interface mismatch and the generated OpenAPI codegen deferral.
 
 Purpose:
-- Convert the planning-only repo into a buildable Go project, preferably by forking/importing geoffrussy while preserving the canonical spec and planning docs.
+- Historical M0 purpose: convert the planning-only repo into a buildable Go project by forking/importing geoffrussy while preserving the canonical spec and planning docs.
 
 Prerequisites:
 - None.
@@ -1603,7 +1602,7 @@ Evidence for M2-PROJECT-LOCK:
 
 Next action guidance:
 - M3/M5/M8/M10 workers should wire `internal/git.AcquireProjectLock` into mutating lifecycle paths before control-plane/executor integration depends on project-local runtime behavior.
-- M15 hardening should define stale-lock cleanup/process-liveness policy and add broader multi-process/race coverage for project mutation exclusion.
+- M15 hardening defined stale-lock process-liveness policy. Future Git/lifecycle work should keep broader multi-process/race coverage for project mutation exclusion aligned with that policy.
 - M8/M15 executor/verify/security workers must wire `ToolPolicy` into command and network-capable tool paths before any execution exists, load `.nexdev/tool_policy.yaml` only through an owned policy-loader task, and keep wildcard shell allow rules invalid outside `dev`.
 - M6/M7/M10/M14 workers should route untrusted repo/tool text through `DetectPromptInjection` and emit/surface `security_warning` findings where their domains own events or review output.
 - M10/M14 observability/control-plane/provider workers should construct loggers through `internal/observability`, attach canonical request/event/provider/stage/task fields, apply `RedactSecrets` at event/artifact/prompt/API boundaries, and add integration tests for no secret leakage.
@@ -2405,7 +2404,7 @@ Acceptance criteria:
 
 ### M14. Observability, Audit Logs, Cost/Usage Tracking
 
-Status: M14-OBSERVABILITY-AUDIT-COST implemented and targeted-package verified on 2026-06-30. Full run-summary aggregation, OTel exporter wiring, broad no-secret-leak E2E fixtures, and cost guard enforcement before parallel launches remain follow-up work.
+Status: M14-OBSERVABILITY-AUDIT-COST implemented and targeted-package verified on 2026-06-30. Later stabilization added run-summary cost aggregation, fake-provider no-secret-leak E2E checks, hostile security fixtures, and cost guard enforcement before parallel launches. OTel exporter wiring remains follow-up work.
 
 Evidence:
 - `internal/state/migrations.go` adds additive migration version `6` with `audit_log` and `cost_ledger` tables plus query indexes. `internal/state/audit_cost.go` adds repositories that redact string and JSON values before persistence.
@@ -2417,7 +2416,7 @@ Evidence:
 - Evidence commands: `go test ./internal/state ./internal/provider ./internal/observability ./internal/controlplane ./internal/config ./internal/app` passed.
 
 Next action guidance:
-- Verify/handoff work should include cost/provider usage summaries from `cost_ledger` in `run_summary.json` once those artifacts exist.
+- Verify/handoff work includes cost/provider usage summaries from `cost_ledger` in `run_summary.json`; future changes should keep that aggregation aligned with `Store.SummarizeCostForRun`.
 - Pipeline/executor/app workers should pass `observability.ContextWithCorrelation` at provider/stage/task boundaries so cost/audit records get precise stage/task/request fields beyond current app defaults.
 - M15 should add broader cross-boundary no-secret-leak integration fixtures for logs/events/API/audit/cost/artifacts and auth rate limiting.
 - If OTel exporters are assigned later, keep them opt-in only, require explicit endpoint config, and avoid network access in normal tests.
@@ -2468,11 +2467,11 @@ Acceptance criteria:
 
 ### M15. Security Hardening and Prompt-Injection/Tool-Risk Defenses
 
-Status: implemented and package-verified on 2026-06-30. Full fake-provider E2E no-secret-leak and slow-client stress remain M16/M19 follow-up.
+Status: implemented and package-verified on 2026-06-30. Later final stabilization added fake-provider E2E no-secret-leak checks, hostile security fixtures, and HTTP slow-reader SSE stress coverage.
 
 Evidence:
 - `internal/safety.ToolPolicy.ValidateTaskWritePath` enforces default write policy, deny globs, active file-lock globs, and task expected-file globs for owned helpers; shell/network execution remains denied and unimplemented by default.
-- `internal/git.AcquireProjectLockWithPolicy` detects stale lock metadata deterministically and fails safe with `ErrProjectLockStale` without process probing or automatic lock deletion.
+- `internal/git.AcquireProjectLockWithPolicy` applies pid-liveness stale-lock recovery: live pids keep the lock held, dead pids allow safe removal and retry, and malformed/unreadable metadata fails safe with `ErrProjectLockStale` for manual recovery.
 - `internal/controlplane` adds deterministic local auth throttling for authenticated routes, returns `429 rate_limited`, and writes `auth_throttle` audit records when audit storage is available.
 - Pipeline artifact writing now redacts decoded JSON string values before persistence; Hivemind emits `security_warning` events for prompt-injection findings in untrusted repo context and checks a provider-launch cost guard before voice/synthesis calls.
 - `internal/observability.CostGuard` denies configured budget-exceeded launches and optional unknown-price launches before provider execution.
@@ -2645,15 +2644,12 @@ Evidence:
 - `SPEC_UPDATE_PROTOCOL.md` changelog records the M18 stabilization decision and the choice to leave `SPEC.md` unchanged.
 - Spec coverage matrix statuses were reconciled through M17 with explicit remaining unbuilt sections below.
 
-Remaining unbuilt requirements for M19/release follow-up:
-- Generated OpenAPI server types and response/codegen drift checks.
-- Slow-client SSE overflow stress coverage and event behavior validation.
-- Policy-gated real verification command runner, output caps, controlled env, and repair loop.
-- Standalone verify/handoff command behavior and richer CLI smoke, including `events --follow`.
-- Full real-provider run execution; current real-provider support is smoke-only and opt-in.
-- Broader hostile security fixtures beyond package-level coverage, including malicious repo docs and MCP poisoning at E2E depth.
+Remaining explicit deferrals after M19/final stabilization:
+- Full OpenAPI response validation/server binding; checked-in generated API types and generated-code drift checks are implemented.
+- Full real-provider run execution; current real-provider support is smoke-only, optional, spend-capped, and explicit-env-gated.
 - Web UI assets, if explicitly re-scoped; terminal TUI is implemented.
-- Release/CI scripts, final handoff, and all full gates including `go test -race ./...` and `govulncheck ./...` in a prepared environment.
+- Artifact content opening.
+- Shared changed-file artifact JSON exposing git rename `old_path`; internal git diff parsing already captures it.
 
 Purpose:
 - Ensure docs, contracts, spec, tests, and implementation are synchronized.
@@ -2989,7 +2985,7 @@ This matrix is updated as implementation proceeds. M0 and M1 first-wave evidence
 | REVIEW-001 | Review | Gate plan before develop with approval, edits, versioning, and audit events | M7 | Pipeline | `internal/pipeline/review.go` | `go test ./internal/pipeline`; control-plane/TUI integration later | architecture; contracts; testing | implemented | M7 supports manual/auto/ci/explicit skip modes, writes approval marker `.nexdev/artifacts/review_approval.json` with `reviewed_approved_plan`, rejects unsafe non-pending edits, increments plan versions, and writes `plan_edit_events`; review task update/delete currently use direct SQL through `Store.DB()` pending state repository methods and must stay internal until repository follow-up |
 | EXEC-001 | Develop executor | Safe fake-worker develop bridge over approved tasks | M8 | Executor/Pipeline | `internal/executor/nexdev.go`; `internal/pipeline/develop.go` | `go test ./internal/executor ./internal/pipeline`; `go test ./...`; `go vet ./...`; `go mod verify` | architecture; contracts; testing | verified | M8 loads reviewed `nexdev_tasks`, requires the review approval marker, persists task status/events, creates blockers, rejects unexpected writes through expected-file/path checks, and exposes in-process pause/resume/cancel/skip/current-task controls. Real LLM execution, shell/network tools, control-plane/CLI wiring, project-lock lifecycle, changed-file manifests, and full artifact-backed prompt context remain follow-up work |
 | SECURITY-001 | Tool/path safety | Deny shell by default, path/symlink policy | M2/M15/TASK-01/TASK-07/TASK-08/TASK-09 | Security | `internal/config`, `internal/safety`, `internal/git`, `internal/pipeline`, `internal/controlplane`, `internal/observability`, security fixtures | `go test ./internal/config ./internal/safety`, `go test ./internal/safety`, `go test ./internal/git`, `go test ./internal/controlplane`, `go test ./internal/pipeline`, `go test ./internal/observability`; `./scripts/e2e_fake_provider.sh`; release gates | architecture; contracts; testing; security; README | verified | M2/M15 safety baselines are verified. TASK-01 adds policy-gated verify command authorization, timeout, output caps, controlled env, and repair attempts. TASK-07 adds pid-liveness stale-lock recovery policy and docs. TASK-08 adds hostile fixtures for malicious `AGENTS.md`, MCP poisoning, `.env` skip/redaction, symlink escape, and output caps. TASK-09 verifies HTTP slow-reader SSE stress. Shell/network remain denied unless policy explicitly allows exact commands. |
-| LOCK-001 | Runtime paths | Single mutating process project lock | M2/M12/M15 | Git/App/Security | `internal/git/project_lock.go`; `internal/app/lifecycle.go` | `go test ./internal/git`; `go test ./internal/app`; race/multi-process lifecycle tests later | architecture; contracts; testing; security | implemented | `.nexdev/run/project.lock` helper resolves through path sanitizer, acquires with exclusive create, writes pid/timestamp metadata, rejects held locks, and releases by removing the file. M12 wires acquire/release around `nexdev serve`; M15 adds deterministic stale-lock detection with safe failure and manual recovery instead of unsafe process probing/deletion. |
+| LOCK-001 | Runtime paths | Single mutating process project lock | M2/M12/M15/TASK-07 | Git/App/Security | `internal/git/project_lock.go`; `internal/app/lifecycle.go` | `go test ./internal/git`; `go test ./internal/app`; race/multi-process lifecycle tests later | architecture; contracts; testing; security | verified | `.nexdev/run/project.lock` helper resolves through path sanitizer, acquires with exclusive create, writes pid/timestamp metadata, rejects held locks, and releases by removing the file. M12 wires acquire/release around `nexdev serve`; TASK-07 adds pid-liveness stale-lock recovery where live pids keep the lock held, dead pids allow safe removal/retry, and malformed/unreadable metadata fails safe for manual recovery. |
 | CLI-001 | CLI | Operator command surface and global flags | M12/M16/M17/TASK-02/TASK-10 | CLI/App | `cmd/nexdev`, `internal/cli`, `internal/app` | `go test ./internal/app ./internal/cli`; `./scripts/e2e_fake_provider.sh`; optional `./scripts/real_provider_smoke.sh` | README; architecture; contracts; testing | verified | M12 switches root identity to `nexdev`, adds required global flags, wires `serve`, token UX, local/remote status/events/provider/artifact reads, doctor, and HTTP client adapters. M16 wires local fake run. TASK-02 implements `events --follow` locally and remotely with reconnect/JSON lines. TASK-10 restricts root help to spec commands and hides legacy completion/help/geoffrussy state paths from the reachable root command. Local real-provider full run remains explicit future scope. |
 | TUI-001 | TUI | Terminal control UX as a client of core API/state/control services | M13 | TUI/CLI | `internal/tui/nexdev.go`; `internal/cli/m12_commands.go` | `go test ./internal/tui`; `go test ./internal/cli`; broader gates later | README; architecture; contracts; testing | implemented | M13 adds terminal-only `nexdev tui`, client/service snapshot model, overview/events/plan/blocker/artifact-config-provider views, refresh/navigation/control keybindings, disabled/deferred action states, redacted rendering, and quit/confirmation safety. It does not create web UI assets, call providers, execute shell commands, or mutate pipeline state directly. |
 | OBS-001 | Observability | Structured logs, disabled-by-default OTel, audit records, provider usage/cost ledger, and redaction boundaries | M2/M14/M15/TASK-05 | Observability/State/Pipeline | `internal/observability`; `internal/state/audit_cost.go`; `internal/provider/structured.go`; `internal/controlplane/auth.go`; `internal/pipeline/verify_handoff.go` | `go test ./internal/observability`; `go test ./internal/state ./internal/provider ./internal/controlplane ./internal/config ./internal/app`; `go test ./internal/pipeline` | architecture; contracts; testing | verified | M2/M14/M15 observability, audit, cost, and redaction behavior is implemented. TASK-05 adds `Store.SummarizeCostForRun` and `run_summary.json` provider usage/cost aggregation. OTel exporters remain opt-in future work and disabled by default. |
@@ -3117,10 +3113,11 @@ Operate as an orchestrator:
 - Do not allow workers to guess or hack around blockers.
 - Stop only when `DEVPLAN.md` and `SPEC.md` are fully complete or when an unrecoverable orchestrator decision is required.
 
-Current repository context from planning:
-- At planning time, the repository was greenfield and contained only `SPEC.md` plus planning docs.
-- The canonical spec requires a Go 1.26.4 implementation and repository strategy of forking/importing `mojomast/geoffrussy`.
-- Preserve root `SPEC.md` and planning docs during bootstrap.
+Current repository context after final stabilization:
+- M0-M19 plus TASK-01 through TASK-10 are implemented or verified at their assigned scope.
+- The module is `github.com/mojomast/nexdev` and `go.mod` declares Go `1.26.4` with no redundant matching `toolchain` line.
+- The final implemented set includes fake-provider E2E, control plane, SSE follow, policy-gated verify runner, generated OpenAPI types and drift tests, cost summary, git-diff changed files, stale-lock recovery policy, hostile security fixtures, SSE stress coverage, and CLI cleanup.
+- Explicit deferrals remain: full real-provider pipeline execution, web UI assets, artifact content opening, full OpenAPI response validation/server binding, and exposing git rename `old_path` in shared changed-file artifact JSON.
 
 Recommended first wave of builder subagents:
 

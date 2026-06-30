@@ -1,8 +1,8 @@
-# Setup
+# Nexdev Setup
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.26.4, matching `go.mod`; there is no redundant matching `toolchain` directive.
 - Git
 - C toolchain for sqlite (`gcc`, platform equivalents)
 
@@ -10,7 +10,7 @@
 
 ```bash
 make build
-./bin/geoffrussy version
+./bin/nexdev version
 ```
 
 ## Initialize Project
@@ -18,42 +18,42 @@ make build
 From your target repo directory:
 
 ```bash
-geoffrussy init
+nexdev init
 ```
 
-State is stored in `.geoffrussy/state.db` in that project.
+Project-local state is stored under `.nexdev/`, including `.nexdev/state.db` and `.nexdev/run/project.lock`.
 
 ## Configure Providers
 
-Interactive setup:
+Provider commands:
 
 ```bash
-geoffrussy config --set-key
-geoffrussy config --set-model
+nexdev provider list
+nexdev provider test <name>
 ```
 
-Provider docs/help:
+Control-plane token setup:
 
 ```bash
-geoffrussy config --provider-help <provider>
-geoffrussy config --list-providers
+nexdev auth token create --role operator --ttl 30d
+nexdev serve
 ```
 
 ## Secure Credential Storage
 
-- Geoffrussy attempts to store API keys in OS keyring first.
-- If keyring is unavailable, it falls back to config storage and records source metadata.
-- Key source state is visible in config output (`keyring`, `env`, `plaintext`, etc).
+- Nexdev control-plane bearer tokens are printed only when created.
+- SQLite stores only token hashes and metadata.
+- Real-provider smoke tests are disabled by default and require explicit env gates, credentials, spend cap, and timeout.
 
 ## Config File
 
-Default path: `~/.geoffrussy/config.yaml`
+Project-local state defaults to `.nexdev/`. Use `nexdev config print`, `nexdev config validate`, and `nexdev config set` for supported configuration workflows.
 
 Example:
 
 ```yaml
 api_keys:
-  openai: sk-...
+  openai: sk-REDACTED
 
 default_models:
   interview.run: gpt-4o
@@ -69,26 +69,27 @@ verbose_logging: false
 
 ## Environment Variables
 
-Supported provider key override pattern:
+Real-provider smoke opt-in uses provider-specific credential env vars such as:
 
 ```bash
-export GEOFFRUSSY_OPENAI_API_KEY=...
-export GEOFFRUSSY_ANTHROPIC_API_KEY=...
-export GEOFFRUSSY_OPENROUTER_API_KEY=...
+export OPENAI_API_KEY=...
+export ANTHROPIC_API_KEY=...
 ```
 
-Generic pattern also works:
+Run the safe default skip path without credentials:
 
 ```bash
-export GEOFFRUSSY_API_KEY_OPENAI=...
+./scripts/real_provider_smoke.sh
 ```
 
 ## Validation Checklist
 
 ```bash
-geoffrussy version
-geoffrussy config --list-providers
-geoffrussy status --tui=false
+nexdev version
+nexdev doctor
+nexdev provider list
+nexdev status --json
+nexdev events --follow
 ```
 
-If providers fail auth, use `--provider-help` for the expected key format and docs links.
+If provider smoke fails auth, verify the explicit opt-in env gates and provider credential variable. Full real-provider pipeline execution remains deferred; fake-provider E2E is the normal local smoke path.

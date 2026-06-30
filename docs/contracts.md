@@ -24,7 +24,7 @@ Project-local runtime lock:
 - Acquisition: create parent directories, then create the lock file atomically with exclusive-create semantics.
 - Metadata: best-effort pid and UTC acquisition timestamp text.
 - Release: close and remove the lock file.
-- Contention: an existing lock file is reported as held. M15 stale-lock policy can report old lock metadata as stale, but it does not probe processes or remove the lock automatically.
+- Contention: an existing live lock is reported as held. Stale-lock recovery uses pid-liveness checks: live pids keep the lock held, dead pids allow safe removal and retry, and malformed or unreadable metadata fails safe for manual operator recovery.
 
 ## 2. OpenAPI Contract
 
@@ -626,7 +626,7 @@ Implemented routes:
 Current route deferrals:
 - `POST /runs` requires an app-level runner service and returns service-unavailable unless `RunStarter` is injected.
 - Task mutation routes and config mutation remain later worker surfaces and currently return `ErrorResponse` with `not_implemented` or `service_unavailable`.
-- Generated OpenAPI server types remain deferred; handlers are manually bound to the existing `api/openapi.yaml` contract.
+- Generated OpenAPI API types are implemented under `api/generated/nexdev_api.gen.go`; handlers are manually bound to the existing `api/openapi.yaml` contract. Full OpenAPI response validation/server binding remains deferred.
 
 Provider-test behavior:
 - `POST /providers/{name}/test` delegates only to an injected `ProviderTester`; without one it returns service-unavailable and does not call providers.
@@ -752,7 +752,7 @@ M14 behavior:
 
 Current deferrals:
 - Runtime metrics and OTel exporters are not wired; future work must keep them disabled by default and network-free in normal tests.
-- Run summary cost aggregation waits for verify/handoff artifacts.
+- Run summary cost aggregation is implemented through `Store.SummarizeCostForRun` and verify/handoff artifacts.
 
 ## 14. CLI Contract
 

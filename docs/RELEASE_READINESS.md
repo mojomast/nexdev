@@ -30,14 +30,14 @@ Use `./scripts/release_check.sh` to run the local release gate. If `govulncheck`
 
 - `./scripts/real_provider_smoke.sh` skips by default and must only run with explicit env gates, credentials, spend cap `<= 0.25`, and bounded timeout.
 
-## Known Release Blockers Or Follow-Ups
+## Known Release Follow-Ups
 
 - Release gate: `govulncheck` is passing under the fixed Go toolchain. Do not suppress vulnerabilities or skip the gate.
-- Generated OpenAPI server types are still deferred; current release checks use route/role contract tests instead of generated-code drift.
-- Policy-gated real verification command execution, output caps, controlled env, and repair loop remain unimplemented beyond current denied-command reporting.
-- Standalone local `nexdev verify` and artifact content opening remain deferred command behavior.
-- `events --follow` remains deferred; snapshot `events` and served SSE replay are implemented.
-- Full real-provider pipeline execution remains out of scope; only opt-in provider smoke exists.
+- Generated OpenAPI types and drift tests are implemented. Full OpenAPI response validation/server binding remains deferred; current handlers are manually bound to the frozen paths.
+- Policy-gated verify command execution, output caps, controlled env, and repair attempts are implemented. Full real-provider pipeline execution remains out of scope; only opt-in provider smoke exists.
+- `nexdev events --follow` is implemented for local and remote event streams with SSE reconnect.
+- Artifact content opening remains deferred command behavior.
+- Web UI assets and the shared changed-file artifact `old_path` extension remain deferred.
 
 ## Maintainer Notes
 

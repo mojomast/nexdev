@@ -1,6 +1,6 @@
 # Nexdev Architecture Plan
 
-**Status:** M18 stabilization reflects implemented behavior through M17.
+**Status:** Final stabilization reflects implemented behavior through TASK-10.
 **Canonical source:** `SPEC.md`.
 
 ## 1. Repository Status
@@ -12,13 +12,12 @@ Actual base strategy:
 - Go module path is `github.com/mojomast/nexdev`.
 - Imported geoffrussy packages provide the initial provider, state, navigation, executor, git, CLI/TUI dependency, migration, security, and test foundations.
 - Existing planning artifacts remain at the repository root and continue to control implementation: `SPEC.md`, `DEVPLAN.md`, `AGENTS.md`, `WORKER_PROTOCOL.md`, `SPEC_UPDATE_PROTOCOL.md`, `TESTING_STRATEGY.md`, `PROMPT_FOR_DEVELOPMENT_SESSION.md`, `docs/architecture.md`, `docs/contracts.md`, and `README.md`.
-- `cmd/nexdev/main.go` is a minimal bootstrap wrapper over the imported CLI wiring; M1/M12 must replace/reshape command behavior through contract-first CLI work.
-- The imported upstream `cmd/geoffrussy` remains present for baseline compatibility until an orchestrated CLI/package cleanup task decides how to retire or adapt it.
-- Baseline checks after import: `go test ./...` and `go vet ./...` pass.
+- `cmd/nexdev/main.go` is the Nexdev CLI entrypoint. TASK-10 hides legacy geoffrussy-era root command surfaces from reachable Nexdev help and keeps the root command aligned with the spec command set.
+- Baseline and release checks after final stabilization include `go test ./...`, `go test -race ./...`, `go vet ./...`, `go mod verify`, `govulncheck ./...`, generated OpenAPI drift checks, and fake-provider E2E.
 
 Next action guidance:
-- Begin M1 contract freeze before feature work: OpenAPI skeleton, event envelope/constants, stage/status contracts, state migration skeleton, provider/router contracts, executor/detour interfaces, and test fixtures.
-- Keep secondary docs aligned with `SPEC.md`; do not treat imported geoffrussy behavior as Nexdev contract unless M1+ contracts adopt it.
+- Keep secondary docs aligned with `SPEC.md`; do not treat imported geoffrussy behavior as Nexdev contract unless Nexdev contracts adopt it.
+- Preserve explicit remaining deferrals: full real-provider pipeline execution, web UI assets, artifact content opening, full OpenAPI response validation/server binding, and the shared changed-file artifact `old_path` extension.
 
 ## 2. Runtime Shape
 
@@ -136,14 +135,14 @@ Current M7 planning behavior:
 Current M8 develop/executor behavior:
 - `internal/pipeline.DevelopStage` implements the canonical `develop` stage and refuses to run until `.nexdev/artifacts/review_approval.json` contains an approved `reviewed_approved_plan` marker. Pending tasks alone are not sufficient and are left untouched when the marker is absent.
 - `internal/executor.NexdevExecutor` is an additive Nexdev bridge over `nexdev_tasks`, `nexdev_blockers`, and the persisted event log. It lists pending/pending-after-detour tasks, updates task status, maps task updates to the required task event family, creates blockers on structured worker blockers, and returns `TaskReport` values.
-- The default test/CI worker path is deterministic `FakeWorker`. It can emit progress, complete tasks, report blockers, and write only task-expected files after `internal/safety.PathSanitizer` validation. Shell and network execution are not implemented.
+- The default test/CI worker path is deterministic `FakeWorker`. It can emit progress, complete tasks, report blockers, and write only task-expected files after `internal/safety.PathSanitizer` validation. General generated-task shell and network execution are not implemented.
 - Basic in-process controls exist for pause, resume, cancel, skip, current task, and steering ingestion. Steering is persisted and included in prompt context as last-N messages plus summary, but it cannot override safety policy or acceptance criteria.
-- Real LLM code execution, shell tools, control-plane handlers, project-lock wiring, and full steering prompt context from requirements/design/repo artifacts remain follow-up work.
+- Real LLM code execution remains deferred to full real-provider pipeline work. Shell command execution exists only through explicit policy-gated verification; generated task shell/network execution remains denied unless a future runner is assigned.
 
 Current M16 fake-run behavior:
 - `internal/app.RunFakeProvider` wires the existing pipeline runner from `repo_analyze` through `complete` for local `nexdev run --fake-provider --no-tui --json` execution. The fake provider is constructed explicitly with a local registry entry and is not added to the global production provider registry.
 - The fake run uses deterministic provider scripts plus `executor.FakeWorker`; the develop task writes only `generated/fake_e2e.txt` through expected-file/path checks. It does not execute shell commands or open network connections.
-- `internal/pipeline.VerifyStage` records a verify report and verify events. Commands, if supplied, are reported as default-policy denied rather than executed. `HandoffStage` writes changed-files, run-summary, and handoff artifacts. `CompleteStage` marks the canonical terminal stage.
+- `internal/pipeline.VerifyStage` records a verify report and verify events. TASK-01 adds policy-gated command execution with exact allow checks, controlled environment, timeout, output caps, cancellation, and bounded repair attempts; denied commands are reported without execution. `HandoffStage` writes changed-files, run-summary, and handoff artifacts. `CompleteStage` marks the canonical terminal stage.
 - The M16 E2E script creates a temp project, runs the full fake pipeline, starts the loopback control plane, validates persisted event/SSE replay, checks artifacts and changed files, and scans artifacts for known fixture secret leaks.
 
 Current M17 real-provider smoke behavior:
@@ -238,12 +237,12 @@ Before a task modifies files:
 8. Record hashes where feasible.
 
 Shell/network tools are denied by default and require explicit policy allowance.
-Command execution and network tool implementations do not exist in this M2 baseline; later executor/verify work must call the policy evaluator before running any command or network-capable tool.
+Verification command execution exists only through the policy-gated verify runner. General task shell/network tools remain absent unless a later runner is assigned, and any future network-capable tool must call the policy evaluator before execution.
 
 Project lock behavior:
 - `internal/git.ProjectLockPath` resolves `.nexdev/run/project.lock` under the project root through `internal/safety.PathSanitizer`.
 - `internal/git.AcquireProjectLock` creates `.nexdev/run`, atomically creates the lock file with exclusive create semantics, writes pid and UTC acquisition timestamp metadata, and removes the file on release.
-- `internal/git.AcquireProjectLockWithPolicy` can deterministically identify old lock metadata as stale, but it does not probe processes or delete the lock automatically. Recovery is a manual operator action after verifying no Nexdev process owns the project.
+- `internal/git.AcquireProjectLockWithPolicy` handles stale locks with pid-liveness checks: live pids keep the lock held, dead pids allow safe removal and retry, and malformed/unreadable metadata fails safe for manual operator recovery.
 
 ## 10. Observability Flow
 
@@ -252,7 +251,7 @@ Current M2 logging baseline:
 - `observability.NewLogger` constructs standard `log/slog` loggers with configurable level and JSON or text handlers.
 - A redacting handler wraps the underlying slog handler and applies `internal/safety.RedactSecrets` to log messages, string attributes, grouped string attributes, and attributes attached through `Logger.With` before write.
 - Field helper attributes use the canonical names from `SPEC.md` section 17: `project_id`, `run_id`, `stage`, `task_id`, `provider`, `model`, `event_id`, and `request_id`.
-- OpenTelemetry, runtime instrumentation, metrics, audit logs, and the cost ledger were not implemented in M2. `observability.OpenTelemetryEnabled` remains a false compatibility constant after M14.
+- OpenTelemetry, runtime instrumentation, metrics, audit logs, and the cost ledger were not implemented in M2. M14 added audit and cost ledger behavior; `observability.OpenTelemetryEnabled` remains a false compatibility constant.
 
 Current M14 observability/audit/cost behavior:
 - State migration version `6` adds durable `audit_log` and `cost_ledger` tables. Repository writes scrub string fields and JSON string values before persistence.
@@ -269,9 +268,9 @@ Current M15 security hardening behavior:
 - Control-plane auth uses a deterministic local throttle for authenticated routes; throttled requests return `429` and produce audit records when audit storage is wired.
 - `observability.CostGuard` can deny provider launches before execution; Hivemind calls it before voice and synthesis provider launches when configured.
 
-M14 follow-ups:
+Observability follow-ups:
 - Pipeline/executor/app boundaries should pass richer request/event/stage/task correlation context into provider calls.
-- Verify/handoff should aggregate `cost_ledger` into `run_summary.json` after those artifacts exist.
+- `run_summary.json` now aggregates provider usage/cost through `Store.SummarizeCostForRun`.
 - OTel exporter setup and metrics remain opt-in follow-up work; do not enable network exporters by default.
 
 ## 11. Control Plane Flow
@@ -301,8 +300,9 @@ Current M12 CLI/app lifecycle behavior:
 - `internal/app` now owns the narrow CLI/server lifecycle used by M12. It resolves project root/config/state paths, opens the project-local SQLite store at `.nexdev/state.db` by default, creates a persistent project ID file, ensures a project row exists, and acquires `.nexdev/run/project.lock` for `nexdev serve`.
 - `nexdev serve` constructs the existing M10 `controlplane.Server` with config-derived bind/auth/CORS/SSE settings, project ID, durable state store, and the M11 MCP routes registered by that server. Startup still fails before listening for non-loopback bind without auth.
 - The server secret for opaque bearer tokens is project-local under `.nexdev/run/server.secret` with `0600` permissions. `nexdev auth token create|list|revoke` uses the M10 token generation/hash helpers and M3 token repository; plaintext is printed only at creation time.
-- If a latest run exists, app wiring supplies M8 `executor.Control` to the server for pause/resume/skip/cancel/steer. App wiring also constructs the M9 `detour.WorkflowManager` with a provider router/structured client from config, so detour requests stay behind the existing detour/provider boundaries. M17 provider-test service wiring is injected only under the explicit real-provider smoke env gate; full run-start service remains service-unavailable/deferred until assigned. CLI control commands use `--control-url` rather than mutating those domains directly.
+- If a latest run exists, app wiring supplies M8 `executor.Control` to the server for pause/resume/skip/cancel/steer. App wiring also constructs the M9 `detour.WorkflowManager` with a provider router/structured client from config, so detour requests stay behind the existing detour/provider boundaries. M17 provider-test service wiring is injected only under the explicit real-provider smoke env gate. Full real-provider run-start behavior remains explicitly deferred; fake-provider local run wiring is implemented. CLI control commands use `--control-url` rather than mutating those domains directly.
 - Local read commands such as `status --json`, `events`, `provider list`, and `artifacts list` construct the same server handler in-process. Remote mode sends HTTP requests only when `--control-url` is supplied and uses `--token` or `NEXDEV_CONTROL_TOKEN` for bearer auth.
+- `nexdev events --follow` follows local in-process events or remote SSE with `Last-Event-ID` reconnect support, JSON-line output in JSON mode, and clean cancellation.
 
 Current M13 terminal TUI behavior:
 - `internal/tui` now owns a Nexdev-specific terminal control model separate from the imported legacy interview/review screens. It depends on a narrow `tui.Client` interface and reads status, events, plan/tasks, blockers, artifacts, redacted config, and provider summaries from an HTTP/control-plane client or an in-process control-plane handler client.
@@ -312,9 +312,12 @@ Current M13 terminal TUI behavior:
 - Displayed event/task/blocker/artifact text is treated as untrusted and passed through secret redaction/control-character scrubbing before rendering.
 - Embedded web UI files remain unimplemented and are intentionally not created by M13 terminal TUI work.
 
-Current M18 stabilization notes:
-- Documentation now treats M0-M17 behavior as implemented at assigned scope and keeps remaining requirements visible for M19 release readiness.
-- No product behavior changed in M18. Remaining architecture work includes generated OpenAPI server types, standalone verify/handoff command services, policy-gated shell verification/repair, slow-client SSE stress hardening, broader hostile security fixtures, web UI if explicitly assigned, and full real-provider run execution if later scoped.
+Final stabilization notes:
+- Documentation now treats M0-M19 plus TASK-01 through TASK-10 behavior as implemented at assigned scope.
+- TASK-03 added checked-in generated OpenAPI types and drift tests. Current handlers remain manually bound; full OpenAPI response validation/server binding remains deferred.
+- TASK-06 added git-diff anchored changed-file detection. Rename `old_path` is parsed internally but is not exposed by shared changed-file artifact JSON until a future contract extension.
+- TASK-08 added hostile security fixtures; TASK-09 added HTTP slow-reader SSE stress coverage; TASK-10 completed root CLI cleanup.
+- Remaining architecture work is limited to explicit deferrals: full real-provider pipeline execution, web UI assets, artifact content opening, full OpenAPI response validation/server binding, and the changed-file artifact `old_path` extension.
 
 ## 12. Development Parallelism
 
