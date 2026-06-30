@@ -377,3 +377,159 @@ func TestMigrationManager_Indexes(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationManager_NexdevContractTablesAndIndexes(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	mgr := NewMigrationManager(db)
+	if err := mgr.Migrate(); err != nil {
+		t.Fatalf("Failed to migrate: %v", err)
+	}
+
+	tables := []string{
+		"runs",
+		"stage_runs",
+		"events",
+		"artifacts",
+		"hivemind_results",
+		"validate_results",
+		"steering_events",
+		"detour_records",
+		"navigation_events",
+		"plan_edit_events",
+		"auth_tokens",
+	}
+
+	for _, table := range tables {
+		if !sqliteObjectExists(t, db, "table", table) {
+			t.Errorf("Nexdev contract table %s not created", table)
+		}
+	}
+
+	indexes := []string{
+		"idx_events_run_sequence",
+		"idx_events_run_type",
+		"idx_runs_project_id",
+		"idx_stage_runs_run_stage",
+		"idx_artifacts_project_kind",
+		"idx_artifacts_run_kind",
+		"idx_hivemind_results_run_voice",
+		"idx_validate_results_run_id",
+		"idx_steering_events_run_task",
+		"idx_detour_records_run_trigger",
+		"idx_navigation_events_project_created",
+		"idx_plan_edit_events_run_created",
+	}
+
+	for _, index := range indexes {
+		if !sqliteObjectExists(t, db, "index", index) {
+			t.Errorf("Nexdev contract index %s not created", index)
+		}
+	}
+}
+
+func TestMigrationManager_NexdevMigrationPreservesGeoffrussyState(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	mgr := NewMigrationManager(db)
+	if err := mgr.Initialize(); err != nil {
+		t.Fatalf("Failed to initialize migrations table: %v", err)
+	}
+	if err := mgr.MigrateToVersion(3); err != nil {
+		t.Fatalf("Failed to migrate to geoffrussy schema version: %v", err)
+	}
+
+	_, err := db.Exec(`
+		INSERT INTO projects (id, name, created_at, current_stage)
+		VALUES ('proj_legacy', 'Legacy Project', '2026-06-29T00:00:00Z', 'develop')
+	`)
+	if err != nil {
+		t.Fatalf("Failed to seed geoffrussy-compatible project: %v", err)
+	}
+
+	if err := mgr.Migrate(); err != nil {
+		t.Fatalf("Failed to apply Nexdev additive migration: %v", err)
+	}
+
+	var name string
+	err = db.QueryRow("SELECT name FROM projects WHERE id = 'proj_legacy'").Scan(&name)
+	if err != nil {
+		t.Fatalf("Failed to read seeded geoffrussy project after Nexdev migration: %v", err)
+	}
+	if name != "Legacy Project" {
+		t.Fatalf("Seeded project changed after migration: got %q", name)
+	}
+
+	if !sqliteObjectExists(t, db, "table", "runs") {
+		t.Fatal("Nexdev runs table missing after migration from geoffrussy-compatible state")
+	}
+}
+
+func TestMigrationManager_NexdevEventSequenceUnique(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	mgr := NewMigrationManager(db)
+	if err := mgr.Migrate(); err != nil {
+		t.Fatalf("Failed to migrate: %v", err)
+	}
+
+	_, err := db.Exec(`
+		INSERT INTO projects (id, name, created_at, current_stage)
+		VALUES ('proj_test', 'Test Project', '2026-06-29T00:00:00Z', 'init');
+		INSERT INTO runs (id, project_id, status, started_at)
+		VALUES ('run_test', 'proj_test', 'running', '2026-06-29T00:00:00Z');
+		INSERT INTO events (id, run_id, sequence, type, source, payload_json, created_at)
+		VALUES ('evt_one', 'run_test', 1, 'run_started', 'core', '{}', '2026-06-29T00:00:00Z');
+	`)
+	if err != nil {
+		t.Fatalf("Failed to seed event sequence test rows: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO events (id, run_id, sequence, type, source, payload_json, created_at)
+		VALUES ('evt_two', 'run_test', 1, 'run_status', 'core', '{}', '2026-06-29T00:00:01Z')
+	`)
+	if err == nil {
+		t.Fatal("Expected duplicate event sequence for a run to fail")
+	}
+}
+
+func TestStore_BusyTimeout(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	var busyTimeout int
+	if err := store.DB().QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("Failed to check busy timeout: %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Errorf("Busy timeout mismatch: got %d, want 5000", busyTimeout)
+	}
+}
+
+func sqliteObjectExists(t *testing.T, db *sql.DB, objectType, name string) bool {
+	t.Helper()
+
+	var found string
+	err := db.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type = ? AND name = ?
+	`, objectType, name).Scan(&found)
+	if err == sql.ErrNoRows {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("Failed to query sqlite object %s %s: %v", objectType, name, err)
+	}
+
+	return found == name
+}

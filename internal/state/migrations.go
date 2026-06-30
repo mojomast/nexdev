@@ -102,6 +102,193 @@ var migrations = []Migration{
 			DROP TABLE IF EXISTS cache;
 		`,
 	},
+	{
+		Version:     4,
+		Description: "Add Nexdev contract tables",
+		Up: `
+			CREATE TABLE IF NOT EXISTS runs (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				status TEXT NOT NULL,
+				current_stage TEXT,
+				started_at TEXT NOT NULL,
+				completed_at TEXT,
+				cancelled_at TEXT,
+				metadata_json TEXT NOT NULL DEFAULT '{}',
+				FOREIGN KEY (project_id) REFERENCES projects(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS stage_runs (
+				id TEXT PRIMARY KEY,
+				run_id TEXT NOT NULL,
+				stage TEXT NOT NULL,
+				status TEXT NOT NULL,
+				attempt INTEGER NOT NULL DEFAULT 1,
+				started_at TEXT,
+				completed_at TEXT,
+				error_json TEXT,
+				output_json TEXT NOT NULL DEFAULT '{}',
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS events (
+				id TEXT PRIMARY KEY,
+				run_id TEXT NOT NULL,
+				sequence INTEGER NOT NULL,
+				type TEXT NOT NULL,
+				source TEXT NOT NULL,
+				stage TEXT,
+				task_id TEXT,
+				payload_json TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				UNIQUE(run_id, sequence),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS artifacts (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT,
+				kind TEXT NOT NULL,
+				path TEXT NOT NULL,
+				sha256 TEXT,
+				version INTEGER NOT NULL DEFAULT 1,
+				metadata_json TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS hivemind_results (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT NOT NULL,
+				cycle INTEGER NOT NULL,
+				voice TEXT NOT NULL,
+				result_json TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS validate_results (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT NOT NULL,
+				report_json TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS steering_events (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT NOT NULL,
+				task_id TEXT,
+				message TEXT NOT NULL,
+				summary TEXT,
+				source TEXT NOT NULL,
+				created_by_role TEXT,
+				created_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS detour_records (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT NOT NULL,
+				trigger_task_id TEXT NOT NULL,
+				reason TEXT NOT NULL,
+				source TEXT NOT NULL,
+				depth INTEGER NOT NULL,
+				result_json TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS navigation_events (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT,
+				from_stage TEXT,
+				to_stage TEXT NOT NULL,
+				reason TEXT,
+				actor TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS plan_edit_events (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT NOT NULL,
+				plan_version_before INTEGER NOT NULL,
+				plan_version_after INTEGER NOT NULL,
+				edit_type TEXT NOT NULL,
+				target_id TEXT,
+				patch_json TEXT NOT NULL,
+				actor TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS auth_tokens (
+				id TEXT PRIMARY KEY,
+				token_hash TEXT NOT NULL UNIQUE,
+				role TEXT NOT NULL,
+				name TEXT,
+				created_at TEXT NOT NULL,
+				expires_at TEXT,
+				revoked_at TEXT,
+				last_used_at TEXT
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_runs_project_id ON runs(project_id);
+			CREATE INDEX IF NOT EXISTS idx_stage_runs_run_stage ON stage_runs(run_id, stage);
+			CREATE INDEX IF NOT EXISTS idx_events_run_sequence ON events(run_id, sequence);
+			CREATE INDEX IF NOT EXISTS idx_events_run_type ON events(run_id, type);
+			CREATE INDEX IF NOT EXISTS idx_artifacts_project_kind ON artifacts(project_id, kind);
+			CREATE INDEX IF NOT EXISTS idx_artifacts_run_kind ON artifacts(run_id, kind);
+			CREATE INDEX IF NOT EXISTS idx_hivemind_results_run_voice ON hivemind_results(run_id, voice);
+			CREATE INDEX IF NOT EXISTS idx_validate_results_run_id ON validate_results(run_id);
+			CREATE INDEX IF NOT EXISTS idx_steering_events_run_task ON steering_events(run_id, task_id);
+			CREATE INDEX IF NOT EXISTS idx_detour_records_run_trigger ON detour_records(run_id, trigger_task_id);
+			CREATE INDEX IF NOT EXISTS idx_navigation_events_project_created ON navigation_events(project_id, created_at);
+			CREATE INDEX IF NOT EXISTS idx_plan_edit_events_run_created ON plan_edit_events(run_id, created_at);
+		`,
+		Down: `
+			DROP INDEX IF EXISTS idx_plan_edit_events_run_created;
+			DROP INDEX IF EXISTS idx_navigation_events_project_created;
+			DROP INDEX IF EXISTS idx_detour_records_run_trigger;
+			DROP INDEX IF EXISTS idx_steering_events_run_task;
+			DROP INDEX IF EXISTS idx_validate_results_run_id;
+			DROP INDEX IF EXISTS idx_hivemind_results_run_voice;
+			DROP INDEX IF EXISTS idx_artifacts_run_kind;
+			DROP INDEX IF EXISTS idx_artifacts_project_kind;
+			DROP INDEX IF EXISTS idx_events_run_type;
+			DROP INDEX IF EXISTS idx_events_run_sequence;
+			DROP INDEX IF EXISTS idx_stage_runs_run_stage;
+			DROP INDEX IF EXISTS idx_runs_project_id;
+
+			DROP TABLE IF EXISTS auth_tokens;
+			DROP TABLE IF EXISTS plan_edit_events;
+			DROP TABLE IF EXISTS navigation_events;
+			DROP TABLE IF EXISTS detour_records;
+			DROP TABLE IF EXISTS steering_events;
+			DROP TABLE IF EXISTS validate_results;
+			DROP TABLE IF EXISTS hivemind_results;
+			DROP TABLE IF EXISTS artifacts;
+			DROP TABLE IF EXISTS events;
+			DROP TABLE IF EXISTS stage_runs;
+			DROP TABLE IF EXISTS runs;
+		`,
+	},
 }
 
 // MigrationManager handles database migrations

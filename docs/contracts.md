@@ -1,6 +1,6 @@
 # Nexdev Contracts Plan
 
-**Status:** Planning artifact. Machine contracts do not exist yet.  
+**Status:** M1 first-wave OpenAPI, event, artifact, and model-output contracts exist.  
 **Canonical source:** `SPEC.md`.  
 **Rule:** Once created, `api/openapi.yaml`, migrations, generated API types, and schema files are contract artifacts and must stay synchronized with this document.
 
@@ -18,8 +18,9 @@ If this document contradicts `SPEC.md`, `SPEC.md` wins until spec-management upd
 
 ## 2. OpenAPI Contract
 
-Planned authoritative file:
+Authoritative file:
 - `api/openapi.yaml`
+- Status: M1 skeleton exists for every required route in `SPEC.md` section 12.2. No HTTP handlers are implemented by this contract task.
 
 Required version:
 - `nexdev-api-v1`
@@ -65,10 +66,21 @@ Role mapping:
 - Operator: observer plus run start, pause, resume, skip, steer, detour, blocker resolve, provider test, operator MCP tools.
 - Admin: operator plus cancel, task mutation, config mutation, token management, destructive operations.
 
+OpenAPI role metadata:
+- Every operation includes `x-nexdev-role` with `none`, `observer`, `operator`, `admin`, or `per-tool` for `POST /mcp/call`.
+
+Current codegen status:
+- Generated API code is intentionally deferred until the codegen tool path is settled for M1 integration.
+- Contract tests currently parse `api/openapi.yaml` with `gopkg.in/yaml.v3` and verify route/role coverage and common schema presence.
+
 ## 3. Event Contract
 
 Required event contract version:
 - `nexdev-event-v1`
+
+Authoritative Go constants and envelope:
+- `internal/contract/events.go`
+- Status: event type constants, required source constants, and `EventEnvelope` are defined in an inert contract package.
 
 Required envelope fields:
 
@@ -236,11 +248,17 @@ Rules:
 - Repair at most configured attempts.
 - Persist raw responses and validation errors when configured.
 
+Authoritative first-wave Go structs:
+- `internal/contract/model_outputs.go`
+- Status: inert structs exist for required structured outputs and are intentionally free of provider calls or pipeline business logic.
+
 ## 7. Provider Contract
 
 Provider boundary:
 - Stages must use provider router/wrapper.
 - No stage calls concrete providers directly.
+- Current M1 router contract is implemented in `internal/provider/router.go`.
+- The imported geoffrussy `Provider` interface and registry remain the concrete provider boundary for M1.
 
 Provider slots:
 - `interview`
@@ -258,9 +276,21 @@ Provider slots:
 
 Empty slot inherits `provider.primary`.
 
+Router behavior:
+- `provider.NewRouter` validates primary and slot provider names against the package registry.
+- `provider.NewRouterWithRegistry` supports tests and app wiring with an explicit registry.
+- `Router.Resolve(slot)` returns the resolved provider/model route for a known slot.
+- Unknown slots and unknown provider names return errors.
+- Model-only slot overrides inherit the primary provider name.
+
 Optional provider capabilities:
 - Structured calls.
 - Usage metadata.
+
+Current deferrals:
+- Structured output wrapper behavior remains M4 follow-up.
+- Usage/cost metadata integration remains M4/M14 follow-up.
+- Deterministic fake provider scripting remains M4 follow-up.
 
 ## 8. Config Contract
 
@@ -358,6 +388,10 @@ Artifact index fields:
 - Created time.
 - Updated time.
 
+Authoritative first-wave Go structs:
+- `internal/contract/artifacts.go`
+- Status: artifact kind constants, manifest/item structs, changed-file manifest, run summary, stage summary, and provider usage structs exist for downstream M1 workers.
+
 ## 12. CLI Contract
 
 Required commands are listed in `DEVPLAN.md` and `SPEC.md` section 18.
@@ -382,3 +416,6 @@ Required contract tests:
 - Auth role matrix tests.
 - MCP schema/permission tests.
 - Artifact manifest tests.
+
+Implemented first-wave tests:
+- `go test ./internal/contract` validates OpenAPI route/role coverage, required schema names, event contract version, event type constants, and event source constants.

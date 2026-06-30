@@ -1,0 +1,907 @@
+openapi: 3.1.0
+info:
+  title: Nexdev Control Plane API
+  version: nexdev-api-v1
+  description: Authoritative M1 skeleton for Nexdev HTTP, SSE, MCP, artifact, event, and structured control contracts.
+servers:
+  - url: http://127.0.0.1:7432
+tags:
+  - name: health
+  - name: runs
+  - name: plan
+  - name: artifacts
+  - name: events
+  - name: config
+  - name: providers
+  - name: tasks
+  - name: blockers
+  - name: mcp
+paths:
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      x-nexdev-role: none
+      description: "Health check. Role: none."
+      responses:
+        "200":
+          description: Service health.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /status:
+    get:
+      tags: [runs]
+      operationId: getStatus
+      x-nexdev-role: observer
+      description: "Full project/run snapshot. Role: observer."
+      responses:
+        "200":
+          description: Current status snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusSnapshot"
+        default:
+          $ref: "#/components/responses/Error"
+  /plan:
+    get:
+      tags: [plan]
+      operationId: getPlan
+      x-nexdev-role: observer
+      description: "Current plan JSON. Role: observer."
+      responses:
+        "200":
+          description: Current plan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+        default:
+          $ref: "#/components/responses/Error"
+  /artifacts:
+    get:
+      tags: [artifacts]
+      operationId: listArtifacts
+      x-nexdev-role: observer
+      description: "Artifact manifest. Role: observer."
+      responses:
+        "200":
+          description: Artifact manifest.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactManifest"
+        default:
+          $ref: "#/components/responses/Error"
+  /events:
+    get:
+      tags: [events]
+      operationId: listEvents
+      x-nexdev-role: observer
+      description: "Event list query, not stream. Role: observer."
+      parameters:
+        - $ref: "#/components/parameters/RunIDQuery"
+        - name: after_sequence
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: type
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching event envelopes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EventEnvelope"
+        default:
+          $ref: "#/components/responses/Error"
+  /runs/{run_id}/stream:
+    get:
+      tags: [events]
+      operationId: streamRunEvents
+      x-nexdev-role: observer
+      description: "SSE event stream with replay. Role: observer. Accepts Last-Event-ID for replay."
+      parameters:
+        - $ref: "#/components/parameters/RunIDPath"
+        - name: Last-Event-ID
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Server-sent event stream of EventEnvelope JSON frames.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+  /runs:
+    post:
+      tags: [runs]
+      operationId: startRun
+      x-nexdev-role: operator
+      description: "Start a run. Role: operator."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartRunRequest"
+      responses:
+        "202":
+          description: Run accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunSnapshot"
+        default:
+          $ref: "#/components/responses/Error"
+  /pause:
+    post:
+      tags: [runs]
+      operationId: pauseRun
+      x-nexdev-role: operator
+      description: "Pause active run. Role: operator."
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ControlRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/AcceptedStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /resume:
+    post:
+      tags: [runs]
+      operationId: resumeRun
+      x-nexdev-role: operator
+      description: "Resume active run. Role: operator."
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ControlRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/AcceptedStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /skip:
+    post:
+      tags: [runs]
+      operationId: skipTask
+      x-nexdev-role: operator
+      description: "Skip current or specified task. Role: operator."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkipRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/AcceptedStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /steer:
+    post:
+      tags: [runs]
+      operationId: addSteering
+      x-nexdev-role: operator
+      description: "Add steering context. Role: operator."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SteerRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/AcceptedStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /detour:
+    post:
+      tags: [runs]
+      operationId: requestDetour
+      x-nexdev-role: operator
+      description: "Trigger manual detour. Role: operator."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DetourRequest"
+      responses:
+        "202":
+          description: Detour request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DetourResult"
+        default:
+          $ref: "#/components/responses/Error"
+  /cancel:
+    post:
+      tags: [runs]
+      operationId: cancelRun
+      x-nexdev-role: admin
+      description: "Cancel active run. Role: admin."
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ControlRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/AcceptedStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /tasks/{task_id}:
+    put:
+      tags: [tasks]
+      operationId: updateTask
+      x-nexdev-role: admin
+      description: "Edit pending task. Role: admin."
+      parameters:
+        - $ref: "#/components/parameters/TaskIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskMutation"
+      responses:
+        "200":
+          description: Updated task.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskSpec"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [tasks]
+      operationId: deleteTask
+      x-nexdev-role: admin
+      description: "Delete pending task. Role: admin."
+      parameters:
+        - $ref: "#/components/parameters/TaskIDPath"
+      responses:
+        "202":
+          $ref: "#/components/responses/AcceptedStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /blockers/{blocker_id}/resolve:
+    post:
+      tags: [blockers]
+      operationId: resolveBlocker
+      x-nexdev-role: operator
+      description: "Resolve blocker. Role: operator."
+      parameters:
+        - $ref: "#/components/parameters/BlockerIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlockerResolveRequest"
+      responses:
+        "202":
+          $ref: "#/components/responses/AcceptedStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /config:
+    get:
+      tags: [config]
+      operationId: getConfig
+      x-nexdev-role: observer
+      description: "Redacted resolved config. Role: observer."
+      responses:
+        "200":
+          description: Redacted resolved config.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedactedConfig"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [config]
+      operationId: updateConfig
+      x-nexdev-role: admin
+      description: "Update safe config fields. Role: admin."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigUpdateRequest"
+      responses:
+        "200":
+          description: Updated redacted config.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedactedConfig"
+        default:
+          $ref: "#/components/responses/Error"
+  /providers:
+    get:
+      tags: [providers]
+      operationId: listProviders
+      x-nexdev-role: observer
+      description: "Provider status. Role: observer."
+      responses:
+        "200":
+          description: Provider status list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [providers]
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProviderStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /providers/{name}/test:
+    post:
+      tags: [providers]
+      operationId: testProvider
+      x-nexdev-role: operator
+      description: "Test provider. Role: operator."
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+      responses:
+        "200":
+          description: Provider test result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /mcp/tools:
+    get:
+      tags: [mcp]
+      operationId: listMCPTools
+      x-nexdev-role: observer
+      description: "List MCP tools. Role: observer."
+      responses:
+        "200":
+          description: MCP tool list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tools]
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MCPTool"
+        default:
+          $ref: "#/components/responses/Error"
+  /mcp/call:
+    post:
+      tags: [mcp]
+      operationId: callMCPTool
+      x-nexdev-role: per-tool
+      description: Invoke MCP tool. Role is enforced per requested tool.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MCPCallRequest"
+      responses:
+        "200":
+          description: MCP call result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPCallResult"
+        default:
+          $ref: "#/components/responses/Error"
+components:
+  parameters:
+    RunIDPath:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+    RunIDQuery:
+      name: run_id
+      in: query
+      schema:
+        type: string
+    TaskIDPath:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+    BlockerIDPath:
+      name: blocker_id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: JSON error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    AcceptedStatus:
+      description: Control request accepted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StatusSnapshot"
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error_code, message, details, request_id]
+      properties:
+        error_code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        request_id:
+          type: string
+    HealthResponse:
+      type: object
+      required: [ok, api_contract_version]
+      properties:
+        ok:
+          type: boolean
+        api_contract_version:
+          type: string
+          const: nexdev-api-v1
+    StatusSnapshot:
+      type: object
+      required: [project_id, active_run]
+      properties:
+        project_id:
+          type: string
+        active_run:
+          anyOf:
+            - $ref: "#/components/schemas/RunSnapshot"
+            - type: "null"
+        stages:
+          type: array
+          items:
+            $ref: "#/components/schemas/StageSnapshot"
+        current_task:
+          anyOf:
+            - $ref: "#/components/schemas/TaskSpec"
+            - type: "null"
+        blockers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Blocker"
+        updated_at:
+          type: string
+          format: date-time
+    RunSnapshot:
+      type: object
+      required: [run_id, project_id, status]
+      properties:
+        run_id:
+          type: string
+        project_id:
+          type: string
+        status:
+          type: string
+        current_stage:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    StageSnapshot:
+      type: object
+      required: [stage, status]
+      properties:
+        stage:
+          type: string
+        status:
+          type: string
+        attempt:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+    Plan:
+      type: object
+      required: [project_id, phases, version]
+      properties:
+        project_id:
+          type: string
+        run_id:
+          type: string
+        version:
+          type: integer
+        phases:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhasePlan"
+    PhasePlan:
+      type: object
+      required: [id, number, title, tasks]
+      properties:
+        id:
+          type: string
+        number:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskSpec"
+    TaskSpec:
+      type: object
+      required: [id, phase_id, title, description, expected_files, dependencies, acceptance_criteria, test_commands, risk_level, required_tools, notes]
+      properties:
+        id:
+          type: string
+        phase_id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        expected_files:
+          type: array
+          items:
+            type: string
+        dependencies:
+          type: array
+          items:
+            type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        test_commands:
+          type: array
+          items:
+            type: string
+        risk_level:
+          type: string
+        required_tools:
+          type: array
+          items:
+            type: string
+        notes:
+          type: array
+          items:
+            type: string
+    TaskMutation:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        expected_files:
+          type: array
+          items:
+            type: string
+        dependencies:
+          type: array
+          items:
+            type: string
+        acceptance_criteria:
+          type: array
+          items:
+            type: string
+        test_commands:
+          type: array
+          items:
+            type: string
+        risk_level:
+          type: string
+        required_tools:
+          type: array
+          items:
+            type: string
+        notes:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+    ArtifactManifest:
+      type: object
+      required: [project_id, artifacts]
+      properties:
+        project_id:
+          type: string
+        run_id:
+          type: string
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArtifactItem"
+    ArtifactItem:
+      type: object
+      required: [id, kind, path, version]
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        run_id:
+          type: string
+        kind:
+          type: string
+        path:
+          type: string
+        sha256:
+          type: string
+        version:
+          type: integer
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    EventEnvelope:
+      type: object
+      required: [event_id, sequence, contract_version, type, project_id, run_id, ts, source, payload]
+      properties:
+        event_id:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+        contract_version:
+          type: string
+          const: nexdev-event-v1
+        type:
+          type: string
+        project_id:
+          type: string
+        run_id:
+          type: string
+        stage:
+          type: string
+        task_id:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        source:
+          type: string
+          enum: [core, executor, worker, tui, api, mcp]
+        payload:
+          type: object
+          additionalProperties: true
+    ProviderStatus:
+      type: object
+      required: [name, authenticated, available]
+      properties:
+        name:
+          type: string
+        authenticated:
+          type: boolean
+        available:
+          type: boolean
+        models:
+          type: array
+          items:
+            type: string
+        last_error:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
+    RedactedConfig:
+      type: object
+      description: Placeholder for resolved config with secrets redacted.
+      additionalProperties: true
+      properties:
+        profile:
+          type: string
+        redacted:
+          type: boolean
+    ConfigUpdateRequest:
+      type: object
+      description: Safe config field update request. Exact mutable fields are frozen by config/auth workers.
+      additionalProperties: true
+    StartRunRequest:
+      type: object
+      properties:
+        project_dir:
+          type: string
+        prompt:
+          type: string
+        from_stage:
+          type: string
+        stage:
+          type: string
+        yes:
+          type: boolean
+        cheap:
+          type: boolean
+        brrrr:
+          type: boolean
+    ControlRequest:
+      type: object
+      properties:
+        run_id:
+          type: string
+        reason:
+          type: string
+    SkipRequest:
+      allOf:
+        - $ref: "#/components/schemas/ControlRequest"
+        - type: object
+          properties:
+            task_id:
+              type: string
+    SteerRequest:
+      type: object
+      required: [message]
+      properties:
+        run_id:
+          type: string
+        task_id:
+          type: string
+        message:
+          type: string
+        source:
+          type: string
+          enum: [cli, api, tui, mcp]
+    DetourRequest:
+      type: object
+      required: [project_id, run_id, trigger_task_id, reason, context, source]
+      properties:
+        project_id:
+          type: string
+        run_id:
+          type: string
+        trigger_task_id:
+          type: string
+        reason:
+          type: string
+        context:
+          type: string
+        source:
+          type: string
+          enum: [blocker_auto, operator_manual, review_replan]
+    DetourResult:
+      type: object
+      required: [id, new_tasks, spliced_after, id_conflicts, depth]
+      properties:
+        id:
+          type: string
+        new_tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskSpec"
+        spliced_after:
+          type: string
+        id_conflicts:
+          type: array
+          items:
+            type: string
+        depth:
+          type: integer
+    Blocker:
+      type: object
+      required: [id, run_id, reason, status]
+      properties:
+        id:
+          type: string
+        run_id:
+          type: string
+        task_id:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    BlockerResolveRequest:
+      type: object
+      required: [resolution]
+      properties:
+        run_id:
+          type: string
+        resolution:
+          type: string
+        resume:
+          type: boolean
+    MCPTool:
+      type: object
+      required: [name, description, role, input_schema]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        role:
+          type: string
+          enum: [observer, operator, admin]
+        input_schema:
+          type: object
+          additionalProperties: true
+    MCPCallRequest:
+      type: object
+      required: [tool, arguments]
+      properties:
+        tool:
+          type: string
+        arguments:
+          type: object
+          additionalProperties: true
+    MCPCallResult:
+      type: object
+      required: [tool, ok]
+      properties:
+        tool:
+          type: string
+        ok:
+          type: boolean
+        result:
+          type: object
+          additionalProperties: true
+        error:
+          $ref: "#/components/schemas/ErrorResponse"

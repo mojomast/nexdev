@@ -101,6 +101,16 @@ Golden updates require an explicit environment variable such as `NEXDEV_UPDATE_G
 
 `api/openapi.yaml` is authoritative once created.
 
+Current M1 first-wave command:
+- `go test ./internal/contract`
+
+Current first-wave coverage:
+- Parses `api/openapi.yaml` with the existing YAML dependency.
+- Verifies every required `SPEC.md` section 12.2 route exists.
+- Verifies `x-nexdev-role` metadata for each route.
+- Verifies common schema names required by the first-wave contract task.
+- Verifies event contract version, required event names, and event sources.
+
 Required checks:
 - OpenAPI file validates.
 - Generated Go types compile.

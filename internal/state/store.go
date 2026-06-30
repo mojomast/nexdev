@@ -61,6 +61,12 @@ func (s *Store) open() error {
 		return fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
 
+	// Wait briefly on lock contention before surfacing SQLITE_BUSY.
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		db.Close()
+		return fmt.Errorf("failed to configure busy timeout: %w", err)
+	}
+
 	s.db = db
 	s.migrationManager = NewMigrationManager(db)
 

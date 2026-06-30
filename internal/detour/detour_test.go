@@ -343,7 +343,8 @@ func TestTrackDetourInDirectory(t *testing.T) {
 		CreatedAt:   time.Now(),
 	}
 
-	err = manager.TrackDetourInDirectory(detour, "./detours")
+	detourDir := t.TempDir()
+	err = manager.TrackDetourInDirectory(detour, detourDir)
 	if err != nil {
 		t.Fatalf("failed to track detour in directory: %v", err)
 	}

@@ -1,16 +1,24 @@
 # Nexdev Architecture Plan
 
-**Status:** Planning artifact. Update as implementation lands.  
+**Status:** M0 bootstrap recorded; update as implementation lands.  
 **Canonical source:** `SPEC.md`.
 
 ## 1. Repository Status
 
-This repository is currently planning-only. It is not yet a geoffrussy fork and contains no Go module. M0 must perform the bootstrap decision and preserve planning artifacts.
+This repository completed M0 bootstrap by importing `mojomast/geoffrussy` source into the existing Nexdev repository while preserving root planning artifacts.
 
-Default bootstrap decision:
-- Fork or import `mojomast/geoffrussy`.
-- Preserve `SPEC.md`, `DEVPLAN.md`, and protocol docs.
-- Rename or initialize the module only after orchestrator approval of module path.
+Actual base strategy:
+- Source imported from `https://github.com/mojomast/geoffrussy.git` at `e29f8e7649584585a93d8fc8ac9123036fcaf38e`.
+- Go module path is `github.com/mojomast/nexdev`.
+- Imported geoffrussy packages provide the initial provider, state, navigation, executor, git, CLI/TUI dependency, migration, security, and test foundations.
+- Existing planning artifacts remain at the repository root and continue to control implementation: `SPEC.md`, `DEVPLAN.md`, `AGENTS.md`, `WORKER_PROTOCOL.md`, `SPEC_UPDATE_PROTOCOL.md`, `TESTING_STRATEGY.md`, `PROMPT_FOR_DEVELOPMENT_SESSION.md`, `docs/architecture.md`, `docs/contracts.md`, and `README.md`.
+- `cmd/nexdev/main.go` is a minimal bootstrap wrapper over the imported CLI wiring; M1/M12 must replace/reshape command behavior through contract-first CLI work.
+- The imported upstream `cmd/geoffrussy` remains present for baseline compatibility until an orchestrated CLI/package cleanup task decides how to retire or adapt it.
+- Baseline checks after import: `go test ./...` and `go vet ./...` pass.
+
+Next action guidance:
+- Begin M1 contract freeze before feature work: OpenAPI skeleton, event envelope/constants, stage/status contracts, state migration skeleton, provider/router contracts, executor/detour interfaces, and test fixtures.
+- Keep secondary docs aligned with `SPEC.md`; do not treat imported geoffrussy behavior as Nexdev contract unless M1+ contracts adopt it.
 
 ## 2. Runtime Shape
 
@@ -34,7 +42,7 @@ Planned package ownership:
 | `internal/config` | Typed config, defaults, loading, validation | Runtime state mutation |
 | `internal/controlplane` | HTTP, SSE, auth middleware, MCP adapter | Pipeline state machine |
 | `internal/contract` | Inert schemas, constants, validation helpers | Service/business logic |
-| `internal/pipeline` | Stage graph, runner, stage implementations | Provider implementations |
+| `internal/pipeline` | Stage graph contracts, prerequisite validation, runner, stage implementations | Provider implementations or concrete state/control-plane types |
 | `internal/executor` | Task execution, updates, steering bridge | HTTP route schemas |
 | `internal/detour` | Detour request, task generation, splice | Control-plane routing |
 | `internal/provider` | Provider interfaces, registry, router, fake provider | Stage-specific business logic |
@@ -57,6 +65,8 @@ Preferred dependency direction:
 Avoid import cycles by defining small interfaces at the consumer boundary.
 
 ## 5. Stage Flow
+
+`internal/pipeline` now owns the Nexdev stage/status contract surface independently from legacy imported `internal/navigation`. The package uses small local interfaces in `StageEnv` so later state, provider, control-plane, git, and safety packages can be wired by `internal/app` without import cycles.
 
 Canonical stage order:
 
@@ -128,6 +138,12 @@ Persist-before-broadcast is mandatory.
 ## 8. Provider Flow
 
 Stages and executor code must call providers only through `internal/provider` router/wrapper.
+
+Current M1 status:
+- `internal/provider` preserves the imported geoffrussy `Provider` interface and registry.
+- `internal/provider.Router` resolves Nexdev stage provider slots to provider/model selections and validates provider names against the registry without instantiating providers.
+- Empty slot selections inherit the primary provider/model selection.
+- Structured output calls, usage/cost audit hooks, and fake-provider scripting are still M4 follow-up work.
 
 Structured output flow:
 1. Build prompt with trusted/untrusted sections and schema.
