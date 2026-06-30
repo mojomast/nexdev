@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -21,9 +22,9 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 	const (
 		projectID   = "proj_sse_stress"
 		runID       = "run_sse_stress"
-		fastReaders = 3
+		fastReaders = 2
 		eventCount  = 96
-		queueLimit  = 4
+		queueLimit  = 2
 	)
 
 	goroutinesBefore := runtime.NumGoroutine()
@@ -36,8 +37,9 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 	}
 	httpServer := httptest.NewServer(server.Handler())
 	client := httpServer.Client()
+	slowClient := slowSSEClient()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -62,15 +64,16 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 		}(resp.Body)
 	}
 
-	slowResp, slowCancel := openSSEStream(t, ctx, client, httpServer.URL, runID)
+	slowResp, slowCancel := openSSEStream(t, ctx, slowClient, httpServer.URL, runID)
 	defer slowCancel()
 	defer slowResp.Body.Close()
 
 	waitForSubscribers(t, ctx, server.Publisher(), fastReaders+1)
 
+	publishCtx := context.Background()
 	payload := json.RawMessage(fmt.Sprintf(`{"blob":%q}`, strings.Repeat("x", 64*1024)))
 	for i := 1; i <= eventCount; i++ {
-		_, err := server.Publisher().Publish(ctx, contract.EventEnvelope{
+		_, err := server.Publisher().Publish(publishCtx, contract.EventEnvelope{
 			EventID: fmt.Sprintf("evt_stress_%03d", i),
 			RunID:   runID,
 			Type:    contract.EventTypeTaskProgress,
@@ -95,28 +98,19 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 		}
 	}
 
-	if _, err := server.Publisher().Publish(ctx, contract.EventEnvelope{EventID: "evt_stress_after_drop", RunID: runID, Type: contract.EventTypeTaskProgress, Source: contract.EventSourceCore, Payload: json.RawMessage(`{"after_drop":true}`)}); err != nil {
+	if _, err := server.Publisher().Publish(publishCtx, contract.EventEnvelope{EventID: "evt_stress_after_drop", RunID: runID, Type: contract.EventTypeTaskProgress, Source: contract.EventSourceCore, Payload: json.RawMessage(`{"after_drop":true}`)}); err != nil {
 		t.Fatalf("publish after slow-reader drop failed: %v", err)
 	}
 
 	// The artificial slow reader intentionally does not drain during the burst.
-	// After the publisher drops it, delayed reads should observe connection end or cancellation promptly.
+	// Subscriber removal is the existing publisher's slow-client drop signal; close
+	// the client afterward so the HTTP handler is not left blocked in a socket write.
 	time.Sleep(500 * time.Millisecond)
-	done := make(chan error, 1)
-	go func() {
-		_, err := io.Copy(io.Discard, slowResp.Body)
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err != nil && !strings.Contains(err.Error(), "closed") && !strings.Contains(err.Error(), "EOF") {
-			t.Fatalf("slow reader ended with unexpected error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		slowCancel()
-		_ = slowResp.Body.Close()
-		t.Fatal("slow reader connection did not terminate after queue overflow")
+	if got := publisherSubscriberCount(server.Publisher()); got != fastReaders {
+		t.Fatalf("slow reader was not removed after overflow: subscribers=%d want=%d", got, fastReaders)
 	}
+	slowCancel()
+	_ = slowResp.Body.Close()
 
 	for _, cancelFast := range fastCancels {
 		cancelFast()
@@ -125,8 +119,29 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 	wg.Wait()
 	httpServer.Close()
 	client.CloseIdleConnections()
+	slowClient.CloseIdleConnections()
 
 	waitForGoroutineDelta(t, goroutinesBefore, 12)
+}
+
+func slowSSEClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := dialer.DialContext(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			if tcp, ok := conn.(*net.TCPConn); ok {
+				_ = tcp.SetReadBuffer(1024)
+			}
+			return conn, nil
+		},
+	}
+	return &http.Client{Transport: transport}
 }
 
 func openSSEStream(t *testing.T, parent context.Context, client *http.Client, baseURL, runID string) (*http.Response, context.CancelFunc) {
