@@ -1,6 +1,6 @@
 # M19 Release Readiness Handoff
 
-Status: M19 toolchain vulnerability deblocking updated the module, CI, and release workflow to use the fixed Go toolchain `go1.25.11`. Final release readiness still depends on the full gate passing in the prepared release environment.
+Status: M19 toolchain vulnerability deblocking updated the module, CI, and release workflow to use the fixed Go toolchain `go1.25.11`. The local release gate now passes with `govulncheck` on `PATH`.
 
 ## Commands Run In M19 Worker Environment
 
@@ -11,8 +11,9 @@ Status: M19 toolchain vulnerability deblocking updated the module, CI, and relea
 - `go vet ./...` passed.
 - `go mod verify` passed.
 - `./scripts/e2e_fake_provider.sh` passed.
-- Earlier M19 runs blocked because `govulncheck` was unavailable on `PATH`; the tool is now expected to be installed in the release environment, for example under `$HOME/go/bin` after `go install`.
-- The module and CI/release workflows now require Go `1.25.11` through `go.mod` and GitHub Actions setup-go pins.
+- `PATH="/home/mojo/go/bin:$PATH" govulncheck ./...` passed with zero reachable vulnerabilities.
+- `PATH="/home/mojo/go/bin:$PATH" ./scripts/release_check.sh` passed all local release gates.
+- The module and CI/release workflows require Go `1.25.11` through `go.mod` and GitHub Actions setup-go pins.
 
 ## Required Gates
 
@@ -31,7 +32,7 @@ Use `./scripts/release_check.sh` to run the local release gate. If `govulncheck`
 
 ## Known Release Blockers Or Follow-Ups
 
-- Release gate: `govulncheck` must remain enabled and pass under the fixed Go toolchain. Do not suppress vulnerabilities or skip the gate.
+- Release gate: `govulncheck` is passing under the fixed Go toolchain. Do not suppress vulnerabilities or skip the gate.
 - Generated OpenAPI server types are still deferred; current release checks use route/role contract tests instead of generated-code drift.
 - Policy-gated real verification command execution, output caps, controlled env, and repair loop remain unimplemented beyond current denied-command reporting.
 - Standalone local `nexdev verify` and artifact content opening remain deferred command behavior.
