@@ -93,14 +93,39 @@ init
 develop -> detour -> develop
 ```
 
-The pipeline runner owns:
-- Stage registry.
-- Stage prerequisites.
-- Status transitions.
-- Resumption from persisted state.
-- Checkpointing after each stage.
+Current M5 runner behavior:
+- `internal/pipeline.Runner` registers canonical `PipelineStage` implementations by `Stage`; pseudo-stages are rejected by the runner registry.
+- Run execution uses the canonical stage order from persisted run state by default. `RunOptions.From` selects a canonical starting stage and `RunOptions.SingleStage` runs exactly one canonical stage for later CLI/control-plane adapters.
+- Resume selection reads `runs.current_stage` and `stage_runs` from SQLite. If the persisted current stage is terminal, resume advances to the next non-terminal canonical stage instead of using in-memory progress.
+- Prerequisites are validated before every stage through `ValidatePrerequisites`. Artifact/task-derived facts are supplied by a `PrerequisiteProvider` interface so concrete stages can add evidence without the runner overreaching into artifact semantics.
+- Stage status changes are checked through `ValidateStatusTransition` before persistence. Completed, skipped, blocked, and failed stages persist output/error JSON to `stage_runs` as a checkpoint-like record.
+- The runner persists `stage_status` events and a final `done` event through the M3 event repository. It does not broadcast SSE; M10 owns replay/broadcast over the persisted log.
 
-Stages must be resumable and must persist outputs.
+Current M6 repo analysis behavior:
+- `internal/pipeline.RepoAnalyzeStage` is a deterministic, provider-free stage registered as `repo_analyze` through the existing `PipelineStage` interface.
+- The stage is constructed with an explicit project root, walks only bounded repository context, excludes `.git`, `.nexdev`, `node_modules`, `vendor`, `dist`, `build`, secret-like files, and files above the configured size cap, and records repo instructions as untrusted strings.
+- It writes `.nexdev/artifacts/repo_analysis.json` and indexes the artifact when `StageEnv.Store` is a `*state.Store` with project/run identifiers available. Shared artifact helper and `artifact_updated` emission remain later artifact/control-plane follow-up work.
+
+Current M6 interview/complexity behavior:
+- `internal/pipeline.InterviewStage` is provider-backed through `provider.StructuredClient` and `provider.SlotInterview`. It builds prompts with `SYSTEM POLICY`, `TRUSTED CONFIG`, `UNTRUSTED REPO CONTEXT`, and `TASK` sections, validates `contract.InterviewData`, blocks on unresolved open questions unless yes/CI assumptions are enabled, writes `.nexdev/artifacts/interview.json`, and indexes the artifact when a `*state.Store` plus project/run identifiers are available.
+- `internal/pipeline.ComplexityStage` computes a deterministic `contract.ComplexityProfile` from interview and repo-analysis inputs first. Optional provider refinement uses `provider.SlotComplexity`; refinement cannot reduce deterministic score, level, phase count, risk factors, voices, or suggested verification tests. The stage writes `.nexdev/artifacts/complexity_profile.json` and indexes it when state is available.
+- Both stages use explicit constructors/config structs rather than expanding `StageEnv`.
+
+Current M6 design behavior:
+- `internal/pipeline.DesignStage` is provider-backed through `provider.StructuredClient` and `provider.SlotDesign`. It consumes supplied interview, repo-analysis, and complexity inputs, builds prompts with trusted sections and clearly marked `UNTRUSTED REPO CONTEXT`, and keeps local response structs in `internal/pipeline`.
+- The stage runs a bounded self-critique/correction loop with default max iterations of `3`, validates that the resulting markdown includes the ten required `SPEC.md` section 10.4 headings, writes `.nexdev/artifacts/design_draft.md`, and indexes it as artifact kind `design_draft` when state is available. Remaining high/critical actionable findings return `BlockedError` unless `AcceptRisk` is set.
+
+Current M6 hivemind/validate behavior:
+- `internal/pipeline.HivemindStage` is provider-backed through `provider.StructuredClient`, `provider.SlotHivemindVoice`, and `provider.SlotHivemindSynthesis`. It consumes supplied interview, repo-analysis, complexity, and design markdown inputs, runs configured voices sequentially by default or with bounded concurrency when `Parallel` is set, writes `.nexdev/artifacts/design_review.json`, and indexes it as artifact kind `design_review` when state is available.
+- Hivemind prompts preserve explicit trusted/untrusted sections, require the security voice to inspect prompt-injection/tool-poisoning risk, and return `BlockedError` after writing the review artifact when synthesis verdict is `revise` or `block` so later design-correction wiring can consume required changes.
+- `internal/pipeline.ValidateStage` is provider-backed through `provider.StructuredClient` and `provider.SlotValidate`. It consumes supplied interview, repo-analysis, complexity, design markdown, and latest hivemind synthesis inputs, writes `.nexdev/artifacts/validation_report.json`, writes `.nexdev/artifacts/validated_design.md` for `pass` and `warn`, and indexes both artifacts when state is available.
+- Validation blocks on conflicts, blockers, and `block` verdicts by default. The stage prompt explicitly forbids deleting or weakening requirements to make validation pass.
+
+M6/M7 follow-ups:
+- App/runner wiring must pass current stage outputs/artifact content into hivemind and validation constructors; the concrete stages intentionally do not rescan or regenerate upstream artifacts.
+- Artifact-writing stages must index files through the artifact repository and emit `artifact_updated` after persistence once the shared artifact/event helper exists.
+- App/CLI/control-plane wiring must acquire the project lock before invoking mutating runner paths.
+- State follow-up should add typed repositories for `hivemind_results` and `validate_results`; this task only writes/indexes artifacts because state ownership was out of scope.
 
 ## 6. State Flow
 
@@ -143,16 +168,21 @@ Current M1 status:
 - `internal/provider` preserves the imported geoffrussy `Provider` interface and registry.
 - `internal/provider.Router` resolves Nexdev stage provider slots to provider/model selections and validates provider names against the registry without instantiating providers.
 - Empty slot selections inherit the primary provider/model selection.
-- Structured output calls, usage/cost audit hooks, and fake-provider scripting are still M4 follow-up work.
+- `internal/provider.StructuredClient` is the M4 compatibility wrapper for structured calls over the imported `Provider.Call(ctx, model, prompt)` interface. It accepts already-wired provider instances, resolves slot/model through `Router.Resolve`, strict-decodes JSON, rejects unknown fields by default, runs optional semantic validation, and repairs decode/validation failures up to the configured cap.
+- The wrapper returns raw response text, attempt count, provider/model metadata, validation errors, and usage metadata exposed by `provider.Response`.
+- `internal/provider.FakeProvider` is a deterministic constructor-only provider for CI and later pipeline tests. It scripts responses by model and prompt matcher, supports invalid-then-repair structured flows through `StructuredClient`, retryable and hard errors, usage metadata, deterministic latency records without sleeping, streaming chunks, model list/discovery, and optional auth-required behavior.
+- The fake provider is not registered in the global provider registry; M6/M16 wiring must opt in explicitly by constructing it and pairing it with a router selection for provider name `fake`.
+- Raw response persistence, provider call event emission, and cost ledger integration remain M14 follow-up work.
 
 Structured output flow:
 1. Build prompt with trusted/untrusted sections and schema.
 2. Route through configured provider slot.
-3. Strict-decode response.
-4. Validate semantic constraints.
-5. Repair if allowed.
-6. Persist raw response and validation errors for audit when configured.
-7. Return typed contract object.
+3. Call the resolved imported provider through `Provider.Call(ctx, model, prompt)`.
+4. Strict-decode response and reject unknown fields unless explicitly allowed by the caller.
+5. Validate semantic constraints through the caller's callback.
+6. Repair decode or validation failures if allowed.
+7. Persist raw response and validation errors for audit when state/event wiring owns that integration.
+8. Return typed contract object plus wrapper metadata.
 
 ## 9. Safety Flow
 

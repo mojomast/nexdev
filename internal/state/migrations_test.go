@@ -399,6 +399,8 @@ func TestMigrationManager_NexdevContractTablesAndIndexes(t *testing.T) {
 		"navigation_events",
 		"plan_edit_events",
 		"auth_tokens",
+		"nexdev_tasks",
+		"nexdev_blockers",
 	}
 
 	for _, table := range tables {
@@ -420,6 +422,11 @@ func TestMigrationManager_NexdevContractTablesAndIndexes(t *testing.T) {
 		"idx_detour_records_run_trigger",
 		"idx_navigation_events_project_created",
 		"idx_plan_edit_events_run_created",
+		"idx_nexdev_tasks_run_order",
+		"idx_nexdev_tasks_run_status",
+		"idx_nexdev_tasks_phase",
+		"idx_nexdev_blockers_run_status",
+		"idx_nexdev_blockers_task",
 	}
 
 	for _, index := range indexes {
@@ -444,6 +451,15 @@ func TestMigrationManager_NexdevMigrationPreservesGeoffrussyState(t *testing.T) 
 	_, err := db.Exec(`
 		INSERT INTO projects (id, name, created_at, current_stage)
 		VALUES ('proj_legacy', 'Legacy Project', '2026-06-29T00:00:00Z', 'develop')
+		;
+		INSERT INTO phases (id, project_id, number, title, content, status, created_at)
+		VALUES ('phase_legacy', 'proj_legacy', 1, 'Legacy Phase', 'legacy', 'not_started', '2026-06-29T00:00:00Z')
+		;
+		INSERT INTO tasks (id, phase_id, number, description, status)
+		VALUES ('legacy_task', 'phase_legacy', '1.01', 'legacy task', 'not_started')
+		;
+		INSERT INTO blockers (id, task_id, description, created_at)
+		VALUES ('legacy_blocker', 'legacy_task', 'legacy blocker', '2026-06-29T00:00:00Z')
 	`)
 	if err != nil {
 		t.Fatalf("Failed to seed geoffrussy-compatible project: %v", err)
@@ -464,6 +480,19 @@ func TestMigrationManager_NexdevMigrationPreservesGeoffrussyState(t *testing.T) 
 
 	if !sqliteObjectExists(t, db, "table", "runs") {
 		t.Fatal("Nexdev runs table missing after migration from geoffrussy-compatible state")
+	}
+	if !sqliteObjectExists(t, db, "table", "tasks") || !sqliteObjectExists(t, db, "table", "blockers") {
+		t.Fatal("legacy geoffrussy task/blocker tables missing after Nexdev migration")
+	}
+	if !sqliteObjectExists(t, db, "table", "nexdev_tasks") || !sqliteObjectExists(t, db, "table", "nexdev_blockers") {
+		t.Fatal("Nexdev task/blocker tables missing after migration from geoffrussy-compatible state")
+	}
+	var legacyTaskDescription string
+	if err := db.QueryRow("SELECT description FROM tasks WHERE id = 'legacy_task'").Scan(&legacyTaskDescription); err != nil {
+		t.Fatalf("Failed to read legacy task after Nexdev migration: %v", err)
+	}
+	if legacyTaskDescription != "legacy task" {
+		t.Fatalf("legacy task changed after migration: got %q", legacyTaskDescription)
 	}
 }
 

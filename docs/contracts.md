@@ -170,7 +170,7 @@ Rules:
 
 Authoritative migration location:
 - `internal/state/migrations.go`
-- Status: M1-C5 additive skeleton exists as migration version `4` using the imported geoffrussy migration runner. M3 repositories now cover events, runs, stage runs, artifacts, auth tokens, steering events, detour records, navigation events, and plan edit events.
+- Status: M1-C5 additive skeleton exists as migration version `4` using the imported geoffrussy migration runner. M3 repositories now cover events, runs, stage runs, artifacts, auth tokens, steering events, detour records, navigation events, and plan edit events. The M3 task/blocker follow-up adds migration version `5` for Nexdev-specific task and blocker tables while preserving legacy geoffrussy `tasks` and `blockers`.
 
 Required SQLite behavior:
 - Foreign keys on.
@@ -192,6 +192,8 @@ Required tables:
 - `navigation_events`
 - `plan_edit_events`
 - `auth_tokens`
+- `nexdev_tasks`
+- `nexdev_blockers`
 
 Required event indexes:
 - Unique `(run_id, sequence)`.
@@ -210,6 +212,13 @@ Additional M1 skeleton indexes:
 - `idx_navigation_events_project_created`
 - `idx_plan_edit_events_run_created`
 
+Task/blocker follow-up indexes:
+- `idx_nexdev_tasks_run_order`
+- `idx_nexdev_tasks_run_status`
+- `idx_nexdev_tasks_phase`
+- `idx_nexdev_blockers_run_status`
+- `idx_nexdev_blockers_task`
+
 Migration policy:
 - Preserve existing geoffrussy tables where possible.
 - Additive migrations by default.
@@ -218,6 +227,7 @@ Migration policy:
 Current compatibility evidence:
 - The migration runner remains the imported custom runner; goose/sqlc are not adopted in M1.
 - Existing geoffrussy tables are preserved and Nexdev tables are added in migration version `4`.
+- Migration version `5` keeps legacy geoffrussy `tasks` and `blockers` intact and adds `nexdev_tasks` plus `nexdev_blockers` instead of adapting incompatible legacy columns.
 - `Store.open` enables foreign keys and WAL and now configures `PRAGMA busy_timeout = 5000` before migrations run.
 
 Event repository behavior:
@@ -241,7 +251,17 @@ Auxiliary state repository behavior:
 - `Store.CreatePlanEditEvent` and `ListPlanEditEventsByRun` preserve plan version before/after, edit type, target, patch JSON, actor, and UTC timestamp. Review editing, plan mutation, version increments, and `plan_updated` event emission remain M7/M10 work.
 - Repository list methods return deterministic ascending order by persisted UTC timestamp and ID. JSON fields are validated before write and round-tripped as raw JSON bytes.
 
+Task and blocker repository behavior:
+- `Store.CreateNexdevTask`, `GetNexdevTask`, `ListNexdevTasks`, and `UpdateNexdevTaskStatus` persist `contract.TaskSpec` fields needed by planning, review, execution, and detour work: ID, phase ID, title, description, expected files, dependencies, acceptance criteria, test commands, risk level, required tools, and notes.
+- Task rows add `project_id`, `run_id`, `status`, `plan_version`, `plan_order`, `created_at`, and `updated_at` for stable per-run listing. Lists order by `plan_version`, `plan_order`, then task ID.
+- Task creation validates required IDs/title/phase, requires acceptance criteria, stores slice fields as JSON arrays, rejects self-dependencies, and checks dependency IDs already exist in the same run. Full DAG cycle validation remains M7 planning/review behavior.
+- `Store.CreateNexdevBlocker`, `ListNexdevBlockers`, and `ResolveNexdevBlocker` persist blocker ID, project/run/task scope, reason, description, status, resolution, metadata JSON, created timestamp, and resolved timestamp. Blocker lists order by `created_at` then ID and can filter by run, task, and status.
+- Blocker task scope references `nexdev_tasks`, not legacy geoffrussy `tasks`. Project/run foreign keys enforce valid Nexdev scope while permitting run-level blockers with no task ID.
+
 Auxiliary follow-ups:
+- M7 must write reviewed `TaskSpec` rows through `CreateNexdevTask` after plan validation/versioning and must continue to own DAG cycle checks, expected-file policy checks, and plan edit events.
+- M8 must load tasks with `ListNexdevTasks`, update execution status through `UpdateNexdevTaskStatus`, and create blockers with `CreateNexdevBlocker` without relying on legacy geoffrussy task/blocker semantics.
+- M9 must use Nexdev task/blocker repositories for detour triggers, depth-exceeded blockers, and spliced task persistence, while coordinating plan edits/events outside `internal/state`.
 - M8 must consume steering repository rows when building task prompts and must keep steering unable to override safety policy, schemas, or acceptance criteria.
 - M9 must write detour records after validated detour creation and coordinate plan edits/events for spliced tasks.
 - M10 must use auth token repository lookups from middleware, update `last_used_at` only after successful auth, enforce expiry/revocation/roles, and expose token management without ever returning bearer token plaintext from state.
@@ -249,9 +269,9 @@ Auxiliary follow-ups:
 
 ## 5. Stage Contract
 
-Authoritative Go constants and interfaces:
+Authoritative Go constants, interfaces, and runner:
 - `internal/pipeline`
-- Status: M1-C3 owns the canonical stage names, stage order, detour pseudo-stage, status constants, transition checks, prerequisite snapshot validation, and minimal `PipelineStage`/`StageEnv` interfaces. Durable runner/resumption remains M5 work.
+- Status: M5 runner framework exists. M1-C3 owns canonical stage names, stage order, detour pseudo-stage, status constants, transition checks, prerequisite snapshot validation, and minimal `PipelineStage`/`StageEnv` interfaces. M5 adds durable registration, execution, checkpoint, event, and resume behavior over M3 state repositories.
 
 Canonical stage order:
 
@@ -284,6 +304,21 @@ Required transitions:
 - `blocked -> running`
 - `failed -> running`
 
+Runner behavior:
+- `Runner.Register` accepts only canonical stages. Product stages are registered by later stage wiring; M6 currently implements `repo_analyze`, `interview`, and `complexity` as concrete `PipelineStage` implementations.
+- `Runner.Run` loads the persisted run, chooses canonical stages in order, validates prerequisites through `ValidatePrerequisites`, and persists stage status/output/error through the M3 run/stage repository methods.
+- `Runner.Resume` is a small wrapper around persisted selection: it reads `runs.current_stage` and `stage_runs`, resumes the current non-terminal stage, or advances to the next canonical non-terminal stage when the current stage is completed or skipped.
+- `RunOptions.SingleStage` supports future `nexdev run --stage <stage>` wiring by running exactly one canonical stage.
+- `RunOptions.From` supports future `--from` behavior by starting at a canonical stage and continuing in order.
+- `PrerequisiteProvider` supplies `PrerequisiteSnapshot` facts. The default provider only derives project existence from `StageEnv.Project` and skipped-stage facts from persisted state; concrete artifact/task prerequisites remain M6/M7/M8 responsibilities.
+- `StageOutputter` is an optional stage interface for checkpoint output JSON. Missing output defaults to `{}`.
+- `ErrStageSkipped` returned from stage validation persists `pending -> skipped` with output JSON. `BlockedError` from stage execution persists `running -> blocked` with error JSON; other execution errors persist `running -> failed`.
+- The runner persists `stage_status` events for status changes and `done` when the run completes, using the M3 event repository. SSE/control-plane broadcast is not part of this contract.
+
+Current deferrals:
+- Stage `started_at` updates remain limited by current M3 repository methods; M5 persists status/output/error/completion checkpoints without changing `internal/state`.
+- Shared artifact helper extraction and `artifact_updated` events remain M7/M10 work.
+
 ## 6. Structured Model Output Contracts
 
 Required schema-bearing outputs:
@@ -313,6 +348,52 @@ Rules:
 Authoritative first-wave Go structs:
 - `internal/contract/model_outputs.go`
 - Status: inert structs exist for required structured outputs and are intentionally free of provider calls or pipeline business logic.
+
+Repo analysis structured output:
+- `internal/pipeline.RepoAnalyzeStage` produces `contract.RepoAnalysis` deterministically without provider calls.
+- The output is derived from bounded repository metadata and selected file contents only: repo docs/instructions, package manifests, lockfiles, Go module files, common build/test config, and entrypoint heuristics.
+- Repo instructions are captured as untrusted strings and may produce risk notes for prompt-injection patterns; they do not override Nexdev policy.
+- Secret-like files including `.env` are excluded from analysis and artifact content.
+
+Interview structured output:
+- `internal/pipeline.InterviewStage` calls `provider.StructuredClient.CallStructured` with `provider.SlotInterview` and strict JSON decoding into `contract.InterviewData`.
+- The stage requires at least one requirement or open question, non-empty `risk_tolerance`, and non-empty `raw_transcript`.
+- If open questions remain and neither yes mode nor CI assumptions are enabled, the stage returns `BlockedError` and does not write the artifact. In yes/CI mode, open questions are converted into `Assumption:` constraints using conservative local-first defaults.
+- The durable disk artifact path is `.nexdev/artifacts/interview.json` with artifact kind `interview`.
+
+Complexity structured output:
+- `internal/pipeline.ComplexityStage` always computes deterministic complexity before optional model refinement.
+- Deterministic output maps score to `trivial`, `small`, `medium`, `large`, or `epic`, recommends phases, collects risk factors and voices, and derives suggested tests from repo-analysis test/lint commands or a manual-review fallback.
+- Optional refinement calls `provider.StructuredClient.CallStructured` with `provider.SlotComplexity` and strict JSON decoding into `contract.ComplexityProfile`.
+- Provider refinement may add or raise recommendations, but the stage enforces the deterministic floor for score, level, phase count, risk factors, voices, and suggested tests before writing.
+- The durable disk artifact path is `.nexdev/artifacts/complexity_profile.json` with artifact kind `complexity_profile`.
+
+Design structured output:
+- `internal/pipeline.DesignStage` calls `provider.StructuredClient.CallStructured` with `provider.SlotDesign` and strict JSON decoding into local stage-owned response structs.
+- The provider response includes `design_markdown`, `critique.findings`, an `actionable` flag, and metadata. Local semantic validation requires non-empty markdown, valid finding severities, actionable suggestions, and all ten required design headings from `SPEC.md` section 10.4.
+- The correction loop defaults to max `3` iterations, feeds actionable findings back into later prompts, stops when no actionable findings remain, and returns `BlockedError` for unresolved high/critical actionable findings unless risk is accepted by stage config.
+- The durable disk artifact path is `.nexdev/artifacts/design_draft.md` with artifact kind `design_draft`.
+
+Hivemind structured output:
+- `internal/pipeline.HivemindStage` calls `provider.StructuredClient.CallStructured` with `provider.SlotHivemindVoice` for each configured voice and `provider.SlotHivemindSynthesis` for synthesis.
+- Voice outputs strict-decode into `contract.HivemindCritique`; semantic validation requires matching voice, valid severity, verdict `approve` or `request_changes`, confidence in `[0,1]`, and valid finding fields.
+- Synthesis strict-decodes into `contract.HivemindSynthesis`; semantic validation requires final verdict `approve`, `revise`, or `block`, valid findings, and required changes for non-approve verdicts.
+- The durable disk artifact path is `.nexdev/artifacts/design_review.json` with artifact kind `design_review`. The artifact contains cycle, critiques, and synthesis. `revise` and `block` verdicts write the artifact, then return `BlockedError`.
+
+Validation structured output:
+- `internal/pipeline.ValidateStage` calls `provider.StructuredClient.CallStructured` with `provider.SlotValidate` and strict JSON decoding into `contract.ValidationReport`.
+- Semantic validation requires verdict `pass`, `warn`, or `block` and valid finding fields in ambiguities, conflicts, missing prerequisites, blockers, and hallucination risks.
+- The durable disk artifact path is `.nexdev/artifacts/validation_report.json` with artifact kind `validation_report`. Verdicts `pass` and `warn` also write `.nexdev/artifacts/validated_design.md` with artifact kind `validated_design`.
+- Conflicts, blockers, and `block` verdicts return `BlockedError` by default after report artifact persistence. The stage does not delete or weaken requirements.
+
+M4 provider wrapper behavior:
+- `internal/provider.StructuredClient.CallStructured` is the compatibility layer for the imported geoffrussy provider boundary, which currently exposes `Provider.Call(ctx, model, prompt)` rather than the illustrative request-shaped interface in `SPEC.md` section 11.1.
+- Callers pass a `Slot`, prompt, destination pointer, and `StructuredOptions`; the wrapper resolves provider/model through `Router.Resolve`, calls the resolved provider instance, decodes JSON into the destination type, and only updates the destination after decode and semantic validation succeed.
+- Unknown JSON fields are rejected by default with `json.Decoder.DisallowUnknownFields`; callers can set `AllowUnknownFields` only for an explicit compatibility need.
+- `StructuredOptions.Validate` provides semantic validation. Decode or validation failures are accumulated as validation errors and feed repair prompts until `MaxRepairAttempts` is exhausted. A negative repair count selects the default of `2`; zero disables repair.
+- Provider errors surfaced by the wrapper are passed through `internal/safety.RedactSecrets`.
+- `StructuredResult` returns raw response text, total provider-call attempts, provider/model metadata, validation errors, and token/rate/quota usage metadata exposed by `provider.Response`.
+- Raw-response persistence and audit/event integration are intentionally not wired in this wrapper task; later state/observability workers should persist or emit the returned metadata without bypassing the wrapper.
 
 ## 7. Provider Contract
 
@@ -351,9 +432,15 @@ Optional provider capabilities:
 - Usage metadata.
 
 Current deferrals:
-- Structured output wrapper behavior remains M4 follow-up.
-- Usage/cost metadata integration remains M4/M14 follow-up.
-- Deterministic fake provider scripting remains M4 follow-up.
+- Usage/cost persistence and cost ledger integration remain M14 follow-up.
+
+Fake provider behavior:
+- `internal/provider.FakeProvider` implements the imported geoffrussy `Provider` interface without changing real provider implementations.
+- Construction is explicit through `NewFakeProvider`; `fake` is not added to the global registry and is disabled unless app/test wiring opts in.
+- Scripts match by model and/or prompt matcher and consume responses deterministically in order.
+- Scripted responses cover valid content, invalid JSON for structured repair tests, unrecoverable invalid content, retryable API errors, hard errors, usage metadata, latency recorded in call history without sleeping, and streaming chunks.
+- `ListModels`, `DiscoverModels`, `GetRateLimitInfo`, `GetQuotaInfo`, `SupportsCodingPlan`, and optional auth-required behavior are implemented for provider-test and CI scenarios.
+- M6 pipeline tests should use `StructuredClient` with the fake provider for JSON-producing stages. M16 E2E wiring should construct the fake explicitly rather than relying on the default real-provider registry.
 
 ## 8. Executor, Steering, and Detour Contracts
 
@@ -528,7 +615,7 @@ Artifact index fields:
 
 Authoritative first-wave Go structs:
 - `internal/contract/artifacts.go`
-- Status: artifact kind constants, manifest/item structs, changed-file manifest, run summary, stage summary, and provider usage structs exist for downstream M1 workers. The M3 state repository indexes artifact rows only; artifact file writing and manifest rendering remain pipeline/M7 work.
+- Status: artifact kind constants, manifest/item structs, changed-file manifest, run summary, stage summary, and provider usage structs exist for downstream M1 workers. The M3 state repository indexes artifact rows. M6 now writes `.nexdev/artifacts/repo_analysis.json`, `.nexdev/artifacts/interview.json`, `.nexdev/artifacts/complexity_profile.json`, `.nexdev/artifacts/design_draft.md`, `.nexdev/artifacts/design_review.json`, `.nexdev/artifacts/validation_report.json`, and `.nexdev/artifacts/validated_design.md` from concrete stages and indexes them when a concrete state store and project/run identifiers are available; shared artifact writing helpers, manifests, and `artifact_updated` event emission remain follow-up work.
 
 ## 13. Observability Contract
 

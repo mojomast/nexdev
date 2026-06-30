@@ -3,6 +3,8 @@ package state
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/mojomast/nexdev/internal/contract"
 )
 
 // Stage represents the current pipeline stage
@@ -150,6 +152,46 @@ type PlanEditEvent struct {
 	Actor             string
 	CreatedAt         time.Time
 }
+
+// NexdevTask persists the reviewed TaskSpec plus execution-facing ordering/status metadata.
+type NexdevTask struct {
+	Spec        contract.TaskSpec
+	ProjectID   string
+	RunID       string
+	Status      string
+	PlanVersion int
+	PlanOrder   int
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// NexdevBlocker records a blocker in the Nexdev event/control-plane shape.
+type NexdevBlocker struct {
+	ID          string
+	ProjectID   string
+	RunID       string
+	TaskID      string
+	Reason      string
+	Description string
+	Status      string
+	Resolution  string
+	Metadata    json.RawMessage
+	CreatedAt   time.Time
+	ResolvedAt  *time.Time
+}
+
+const (
+	NexdevTaskStatusPending            = "pending"
+	NexdevTaskStatusRunning            = "running"
+	NexdevTaskStatusCompleted          = "completed"
+	NexdevTaskStatusBlocked            = "blocked"
+	NexdevTaskStatusSkipped            = "skipped"
+	NexdevTaskStatusFailed             = "failed"
+	NexdevTaskStatusPendingAfterDetour = "pending_after_detour"
+
+	NexdevBlockerStatusOpen     = "open"
+	NexdevBlockerStatusResolved = "resolved"
+)
 
 // InterviewData contains all gathered requirements
 type InterviewData struct {

@@ -118,4 +118,4 @@ Before accepting a milestone, verify:
 
 ## 9. Changelog
 
-No implementation milestone spec updates have occurred yet. This planning session created the protocol only.
+- 2026-06-30 M4-SPEC-REVIEW: Clarified `SPEC.md` section 11.1 to record the accepted v0.1 compatibility boundary for the imported geoffrussy `Provider` interface while preserving provider-router, structured-output, audit, usage, and cost requirements. The richer request-shaped provider API remains a future optional capability adapter, not the current concrete interface.

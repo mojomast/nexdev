@@ -1661,7 +1661,7 @@ Acceptance criteria:
 
 ### M3. SQLite State, Migrations, Repositories, Fixtures
 
-Status: verified for assigned M3 repository groups. State Worker B verified the M3 event repository on 2026-06-30; State Worker C verified run, stage-run, and artifact repositories on 2026-06-30; State Worker D verified auth token, steering, detour, navigation, and plan edit repositories on 2026-06-30. Higher-level auth/control-plane, steering prompt context, detour manager, navigation runner, and review editing integrations remain later milestone work.
+Status: verified for assigned M3 repository groups. State Worker B verified the M3 event repository on 2026-06-30; State Worker C verified run, stage-run, and artifact repositories on 2026-06-30; State Worker D verified auth token, steering, detour, navigation, and plan edit repositories on 2026-06-30. The M3 task/blocker contract follow-up was implemented on 2026-06-30 with additive migration version `5` for Nexdev-specific task/blocker persistence. Higher-level auth/control-plane, steering prompt context, detour manager, navigation runner, and review editing integrations remain later milestone work.
 
 Evidence for M3-STATE-EVENTS:
 - `internal/state/events.go` implements persisted `contract.EventEnvelope` storage on migration version `4`, transactional per-run sequence allocation, caller-sequence conflict rejection, UTC RFC3339Nano timestamp storage/load, event ID to sequence mapping, and replay queries after sequence or event ID.
@@ -1683,12 +1683,21 @@ Evidence for M3-STATE-AUX-REPOS:
 - Documentation updates are recorded in `docs/contracts.md` and `TESTING_STRATEGY.md`.
 - Verification command: `go test ./internal/state` passed.
 
+Evidence for M3-FOLLOWUP-TASK-BLOCKER-CONTRACT:
+- `internal/state/migrations.go` adds additive migration version `5` with `nexdev_tasks` and `nexdev_blockers`, preserving legacy geoffrussy `tasks` and `blockers` tables.
+- `internal/state/tasks.go` persists `contract.TaskSpec` fields plus project/run/status/plan version/order metadata, validates required fields and same-run dependency references, preserves JSON slice fields, and lists tasks in stable plan order.
+- `internal/state/blockers_nexdev.go` persists Nexdev blocker/control-plane fields, validates metadata JSON, lists by run/task/status in stable order, and resolves blockers with UTC timestamps.
+- `internal/state/tasks_test.go`, `blockers_nexdev_test.go`, and `migrations_test.go` cover task CRUD/list/status/dependency JSON behavior, blocker create/resolve/list behavior, FK/unique behavior, additive migration from existing DB, and legacy table compatibility.
+- Documentation updates are recorded in `docs/contracts.md` and `TESTING_STRATEGY.md`.
+- Verification command: `go test ./internal/state` passed.
+
 Next action guidance:
 - M5 runner work should use the run/stage repositories for durable resumption and enforce status transitions/canonical stage validation outside `internal/state`.
 - M7 pipeline/artifact work should use the artifact repository for indexing after writing files, should select stable artifact IDs/kinds, and should emit `artifact_updated` through the event path after persistence.
-- M7 review work should write `plan_edit_events` through `Store.CreatePlanEditEvent` only after a validated plan mutation and version increment; event emission remains outside `internal/state`.
+- M7 planning/review work should persist approved `contract.TaskSpec` rows through `Store.CreateNexdevTask` after validating cycles, expected-file requirements, plan version/order, and review mutations; it should write `plan_edit_events` through `Store.CreatePlanEditEvent` only after a validated plan mutation and version increment. Event emission remains outside `internal/state`.
+- M8 executor work should load reviewed tasks through `Store.ListNexdevTasks`, update status through `Store.UpdateNexdevTaskStatus`, and create structured blockers through `Store.CreateNexdevBlocker` rather than relying on imported geoffrussy `tasks` or `blockers` semantics.
 - M8 steering work should read `Store.ListSteeringEvents` for prompt context and implement last-N plus summary behavior without allowing safety-policy overrides.
-- M9 detour work should persist validated detour results through `Store.CreateDetourRecord` and coordinate any resulting plan edits with the plan edit repository.
+- M9 detour work should use `Store.ListNexdevBlockers`, `CreateNexdevBlocker`, and `ResolveNexdevBlocker` for blocker flow, persist validated detour results through `Store.CreateDetourRecord`, create spliced tasks through `Store.CreateNexdevTask`, and coordinate resulting plan edits with the plan edit repository.
 - M10 SSE/control-plane work should call `Store.PersistEvent` before broadcast and replay with `Store.ListEvents` using `AfterEventID` for `Last-Event-ID`.
 - M10 should decide HTTP behavior for unknown `Last-Event-ID` values and enforce configured replay caps at the control-plane layer, not in the state repository.
 - M10 auth work should use `Store.GetAuthTokenByHash`, `RevokeAuthToken`, `TouchAuthTokenLastUsed`, and `ListAuthTokens` while keeping token generation/hashing/comparison in auth middleware/CLI services.
@@ -1748,7 +1757,28 @@ M1-C5 baseline for M3:
 
 ### M4. Provider Registry and Fake Provider Harness
 
-Status: partially unblocked by M1-C6 router contracts; structured wrapper, fake provider, and usage/cost behavior remain planned for M4.
+Status: fake-provider harness verified for M4. M1-C6 router contracts are verified, M4-PROVIDER-STRUCTURED added the structured output compatibility wrapper on 2026-06-30, and M4-PROVIDER-FAKE added deterministic fake provider scripting on 2026-06-30. Raw-response persistence/audit hooks and usage/cost ledger integration remain planned follow-up work.
+
+Evidence for M4-PROVIDER-STRUCTURED:
+- `internal/provider/structured.go` defines `StructuredClient.CallStructured` over the imported `Provider.Call(ctx, model, prompt)` interface without refactoring concrete providers.
+- The wrapper resolves provider/model through `Router.Resolve`, strict-decodes JSON with unknown-field rejection by default, runs optional semantic validation, repairs decode/validation failures up to the configured cap, redacts provider errors with `internal/safety.RedactSecrets`, and returns raw response text, attempts, provider/model metadata, validation errors, and response usage metadata.
+- `internal/provider/structured_test.go` covers valid decode, unknown field rejection, repair success, repair cap failure, semantic validation failure, slot/model resolution, usage metadata capture, and provider error redaction.
+- Documentation updates are recorded in `docs/architecture.md`, `docs/contracts.md`, and `TESTING_STRATEGY.md`.
+- Verification command: `go test ./internal/provider` passed.
+
+Evidence for M4-PROVIDER-FAKE:
+- `internal/provider/fake.go` defines constructor-only `FakeProvider` implementing the imported geoffrussy `Provider` interface without registering it globally.
+- The fake provider scripts deterministic responses by model and prompt matcher, supports structured invalid-then-repair flows through `StructuredClient`, unrecoverable invalid responses, retryable and hard errors, usage metadata, deterministic latency call records without sleeps, streaming chunks, model list/discovery, optional auth-required behavior, and coding-plan capability metadata.
+- `internal/provider/fake_test.go` covers basic call, structured repair through `StructuredClient`, unrecoverable invalid response, error scripting, usage metadata, streaming chunks, model listing/discovery, authentication behavior, and disabled-by-default registry behavior.
+- Documentation updates are recorded in `docs/architecture.md`, `docs/contracts.md`, and `TESTING_STRATEGY.md`.
+- Verification command: `go test ./internal/provider` passed.
+
+Next action guidance:
+- M6 pipeline workers should construct `FakeProvider` explicitly for stage tests and call JSON-producing stages through `StructuredClient` rather than duplicating structured validation behavior.
+- Pipeline workers should call `StructuredClient.CallStructured` for JSON-producing stages and use returned raw/validation metadata for later audit persistence instead of calling providers directly.
+- State/observability follow-up should persist raw responses, validation errors, latency, and cost metadata from wrapper results/events when those integration seams are assigned.
+- Spec-management should record the accepted compatibility-wrapper decision for the `SPEC.md` section 11.1 imported-interface mismatch without weakening the structured-output requirements.
+- M16 E2E work should wire the fake provider by explicit constructor/config path; it must not rely on global provider registry registration.
 
 Purpose:
 - Preserve geoffrussy provider boundary and add structured/fake-provider support.
@@ -1798,6 +1828,20 @@ Acceptance criteria:
 
 ### M5. Pipeline Runner and Stage Framework
 
+Status: verified for M5 runner framework on 2026-06-30. Durable runner registration, prerequisite validation integration, status transition enforcement, checkpoint-like stage output/error persistence, persisted event emission, and resume selection from M3 run/stage state are implemented. Concrete product stages remain M6/M7 work.
+
+Evidence:
+- `internal/pipeline/runner.go` implements `Runner`, canonical stage registration, `Run`, `Resume`, `RunOptions.From`, `RunOptions.SingleStage`, `PrerequisiteProvider`, optional `StageOutputter`, skipped and blocked stage signals, status transition validation through `ValidateStatusTransition`, checkpoint output/error persistence through M3 `Store` methods, and persisted `stage_status`/`done` events through `Store.PersistEvent`.
+- `internal/pipeline/runner_test.go` covers canonical fake-stage execution order, prerequisite rejection, persisted invalid status transition rejection, resume after a completed persisted stage, skipped checkpoint output, blocked/failed stage persistence, and event emission.
+- Documentation updates are recorded in `docs/architecture.md`, `docs/contracts.md`, and `TESTING_STRATEGY.md`.
+- Verification commands: `go test ./internal/pipeline` passed; `go test ./...` passed.
+
+Next action guidance:
+- M6 stage workers should register concrete stages with this runner rather than duplicating navigation/status logic, should provide concrete prerequisite facts through `PrerequisiteProvider`, and should call provider structured-output wrappers for model-backed JSON.
+- M7 artifact/review workers should use stage output checkpoints only for runner state and must separately write/index artifact files through the artifact repository before emitting `artifact_updated`.
+- M10 control-plane and M12 CLI workers should wire `RunOptions.SingleStage`, `RunOptions.From`, and `Resume` to public commands/APIs and should broadcast only events already persisted by the state event repository.
+- App/CLI lifecycle work still needs to acquire `.nexdev/run/project.lock` around mutating runner invocations.
+
 Purpose:
 - Implement durable stage orchestration, prerequisite validation, checkpointing, and resumption.
 
@@ -1843,6 +1887,34 @@ Acceptance criteria:
 - Empty fake stages can run through framework and persist progress.
 
 ### M6. Repo Analyze, Interview, Complexity, Design, Hivemind, Validate Stages
+
+Status: in_progress. M6-REPO-ANALYZE was implemented by Repo Analysis Worker on 2026-06-30. M6-INTERVIEW-COMPLEXITY was implemented by Interview/Complexity Worker on 2026-06-30. M6-DESIGN was implemented by Design Worker on 2026-06-30. M6-HIVEMIND-VALIDATE was implemented by Hivemind/Validation Worker on 2026-06-30; full runner/app integration through planning remains follow-up.
+
+Evidence for M6-REPO-ANALYZE:
+- `internal/pipeline/repo_analyze.go` implements deterministic `repo_analyze` as a `PipelineStage` with `Name`, `Validate`, `Run`, `Resume`, and `StageOutputter` support.
+- The stage uses an explicit project-root constructor, bounded file/context caps, default excludes for `.git`, `.nexdev`, `node_modules`, `vendor`, `dist`, and `build`, secret-file avoidance for `.env` and key-like files, and heuristic detection for languages, frameworks, package managers, test/lint commands, entrypoints, important files, untrusted repo instructions, risk notes, and summary.
+- The stage writes `.nexdev/artifacts/repo_analysis.json` and indexes it through `Store.UpsertArtifact` when `StageEnv.Store` is a `*state.Store` and project/run identifiers are available.
+- `internal/pipeline/repo_analyze_test.go` covers bounded excludes, detection heuristics, untrusted instruction capture, secret file avoidance, artifact JSON writing/indexing, and stage interface/resume behavior.
+
+Evidence for M6-INTERVIEW-COMPLEXITY:
+- `internal/pipeline/interview.go` implements provider-backed `interview` as a `PipelineStage` using `provider.StructuredClient` and `provider.SlotInterview`, trusted/untrusted prompt sections, semantic validation for `contract.InterviewData`, yes/CI assumption conversion, `BlockedError` for unresolved open questions, `.nexdev/artifacts/interview.json` writing, and optional state artifact indexing.
+- `internal/pipeline/complexity.go` implements deterministic-first `complexity` as a `PipelineStage`, optional `provider.SlotComplexity` refinement, deterministic floor enforcement for score/level/phases/risks/voices/suggested tests, `.nexdev/artifacts/complexity_profile.json` writing, and optional state artifact indexing.
+- `internal/pipeline/interview_test.go` and `internal/pipeline/complexity_test.go` cover valid fake-provider structured calls, underspecified blocked behavior, yes/CI assumptions, deterministic complexity levels, provider refinement, invalid structured repair, artifact writing/indexing, and stage interface behavior.
+
+Evidence for M6-DESIGN:
+- `internal/pipeline/design.go` implements provider-backed `design` as a `PipelineStage` using `provider.StructuredClient` and `provider.SlotDesign`, trusted/untrusted prompt sections, local response/metadata structs, a bounded default-three-iteration critique/correction loop, required design heading validation, `BlockedError` for unresolved high/critical actionable findings unless risk is accepted, `.nexdev/artifacts/design_draft.md` writing, and optional state artifact indexing.
+- `internal/pipeline/design_test.go` covers successful design artifact writing/indexing, correction loop feedback and stopping, max-iteration blocking for high-severity remaining findings, invalid structured-output repair, required section validation, and stage interface/resume/output behavior.
+
+Evidence for M6-HIVEMIND-VALIDATE:
+- `internal/pipeline/hivemind.go` implements provider-backed `hivemind` as a `PipelineStage` using `provider.StructuredClient`, `provider.SlotHivemindVoice`, `provider.SlotHivemindSynthesis`, configured voices, sequential default execution, bounded parallel execution when configured, trusted/untrusted prompt sections, semantic validation for `contract.HivemindCritique` and `contract.HivemindSynthesis`, `.nexdev/artifacts/design_review.json` writing, optional state artifact indexing, and `BlockedError` for synthesis `revise` or `block` after artifact persistence.
+- `internal/pipeline/validate.go` implements provider-backed `validate` as a `PipelineStage` using `provider.StructuredClient` and `provider.SlotValidate`, supplied interview/repo-analysis/complexity/design/hivemind synthesis inputs, semantic validation for `contract.ValidationReport`, `.nexdev/artifacts/validation_report.json` writing, `.nexdev/artifacts/validated_design.md` writing for pass/warn, optional state artifact indexing, and default blocking on conflicts, blockers, and block verdicts without deleting requirements.
+- `internal/pipeline/hivemind_test.go` and `internal/pipeline/validate_test.go` cover fake-provider voice/synthesis/validation calls, invalid structured-output repair, revise/block behavior, pass/warn/block behavior, conflict/blocker default blocking, artifact writing/indexing, bounded parallel hivemind order preservation, and stage interface/resume/output behavior.
+
+Next action guidance:
+- Runner/app integration should pass the design draft output/artifact plus `contract.RepoAnalysis`, `contract.InterviewData`, `contract.ComplexityProfile`, and latest `contract.HivemindSynthesis` into concrete stage constructors rather than rescanning or regenerating them independently.
+- M7/shared artifact work should factor artifact writing/indexing and add `artifact_updated` emission after persistence so later stages do not duplicate local helpers.
+- M6/M15 security follow-up should decide whether repo_analyze/interview/complexity/design prompt-injection findings should also persist `security_warning` events once event emission ownership for concrete stages is assigned.
+- State follow-up should add typed repositories for `hivemind_results` and `validate_results`; M6-HIVEMIND-VALIDATE intentionally wrote/indexed artifacts only because state edits were out of scope.
 
 Purpose:
 - Implement the pre-planning analysis and design stages.
@@ -2717,14 +2789,19 @@ This matrix is updated as implementation proceeds. M0 and M1 first-wave evidence
 |---|---|---|---|---|---|---|---|---|---|
 | PROD-001 | Product | Local-first Go single-binary coding harness | M0-M19 | Foundation | `cmd/nexdev`, imported geoffrussy CLI base | `go test ./...`, `go vet ./...`; CLI/E2E later | README, architecture | in_progress | M0 created buildable binary path; product behavior still contract/feature work |
 | BASE-001 | Source synthesis | Fork/import geoffrussy and preserve provider/state/navigation/executor/git | M0 | Foundation | repo-wide imported source | `go test ./...`, `go vet ./...` | architecture | verified | Imported geoffrussy at `e29f8e7649584585a93d8fc8ac9123036fcaf38e`; planning docs preserved |
-| STAGE-001 | Stage graph | Implement canonical stage graph and prerequisites | M1/M5 | Pipeline | `internal/pipeline` | `go test ./internal/pipeline`; runner tests later | architecture; contracts follow-up | in_progress | M1-C3 verified contract constants, status transitions, prerequisite snapshot rules, and import-cycle-safe interfaces; durable runner/resumption remains M5 |
+| STAGE-001 | Stage graph | Implement canonical stage graph and prerequisites | M1/M5 | Pipeline | `internal/pipeline` | `go test ./internal/pipeline`; `go test ./...` | architecture; contracts; testing | verified | M1-C3 verified contract constants, status transitions, prerequisite snapshot rules, and import-cycle-safe interfaces; M5 verified durable runner registration, prerequisite integration, status persistence, resume selection, checkpoint output/error JSON, and persisted events. Concrete product stages remain M6/M7 |
 | STATE-001 | SQLite | Durable SQLite state with WAL/FK/busy timeout | M3 | State | `internal/state` | `go test ./internal/state`; integration tests later | contracts; testing | verified | M1-C5 migration skeleton verified; M3 event, run/stage/artifact, auth token, steering, detour, navigation, and plan edit repositories verified; higher-level service integrations remain later milestones |
 | EVENT-001 | SSE/events | Persisted event log, monotonic per run | M3/M10 | State/Control | `internal/state/events.go`, `internal/controlplane` later | `go test ./internal/state`; SSE tests later | contracts/API; testing | in_progress | M3 event repository persists envelopes, allocates per-run sequences transactionally, maps `Last-Event-ID` to sequence, and replays after sequence/event ID; SSE broadcast/heartbeat/slow-client behavior remains M10 |
 | API-001 | Control plane | Required HTTP routes from OpenAPI | M1/M10 | Control | `api/openapi.yaml`, `internal/controlplane` | `go test ./internal/contract`; handler tests later | contracts/API | in_progress | OpenAPI skeleton and role metadata exist; handlers/codegen pending |
 | AUTH-001 | Auth | Opaque bearer tokens with roles/expiry/revocation | M3/M10 | Auth | `internal/controlplane/auth.go`; `internal/state/auth_tokens.go`; controlplane later | `go test ./internal/controlplane`; `go test ./internal/state`; full auth matrix later | security/contracts | in_progress | M3 token repository stores hash-only role/name/expiry/revocation/last-used metadata; token generation, hashing, constant-time compare, expiry/revocation enforcement, and middleware remain M10 |
 | MCP-001 | MCP | MCP tools as thin wrappers over control plane | M11 | MCP | `internal/controlplane/mcp.go` | MCP tests | contracts/API | planned | Same role checks |
-| PROVIDER-001 | Provider | Preserve registry and route by stage | M1/M4 | Provider | `internal/provider/router.go`; imported provider registry | `go test ./internal/provider`; structured/fake tests later | architecture; contracts | in_progress | M1-C6 verified slot routing and primary inheritance; structured wrapper/fake provider remain M4 |
-| STRUCT-001 | Structured outputs | Strict decode, semantic validate, repair/reject | M4/M6 | Provider/Pipeline | `internal/contract/model_outputs.go`; provider + pipeline later | `go test ./internal/contract`; schema repair tests later | contracts | in_progress | First-wave inert structs exist; validation/repair behavior pending |
+| REPO-001 | Repo analysis | Deterministic bounded repository analysis artifact | M6 | Pipeline | `internal/pipeline/repo_analyze.go` | `go test ./internal/pipeline`; full pipeline integration later | architecture; contracts; testing | implemented | M6-REPO-ANALYZE produces `contract.RepoAnalysis`, excludes secret/runtime/dependency/build paths, captures untrusted repo instructions as strings with risk notes, writes `.nexdev/artifacts/repo_analysis.json`, and indexes the artifact when `*state.Store` plus project/run IDs are available; shared artifact helper and `artifact_updated` event emission remain M7/M10 follow-up |
+| PROVIDER-001 | Provider | Preserve registry and route by stage | M1/M4 | Provider | `internal/provider/router.go`; `internal/provider/structured.go`; `internal/provider/fake.go`; imported provider registry | `go test ./internal/provider`; E2E later | architecture; contracts | in_progress | M1-C6 verified slot routing and primary inheritance; M4 structured wrapper and fake provider verified; raw persistence/audit and E2E integration remain follow-up |
+| INTERVIEW-001 | Interview | Provider-backed structured requirements artifact | M6 | Pipeline | `internal/pipeline/interview.go` | `go test ./internal/pipeline`; full pipeline integration later | architecture; contracts; testing | implemented | M6-INTERVIEW-COMPLEXITY uses `StructuredClient`/`SlotInterview`, blocks unresolved open questions outside yes/CI, converts yes/CI questions to `Assumption:` constraints, writes `.nexdev/artifacts/interview.json`, and indexes when state is available |
+| COMPLEXITY-001 | Complexity | Deterministic/provider-refined complexity profile | M6 | Pipeline | `internal/pipeline/complexity.go` | `go test ./internal/pipeline`; full pipeline integration later | architecture; contracts; testing | implemented | M6-INTERVIEW-COMPLEXITY computes deterministic complexity first, optionally refines through `SlotComplexity`, enforces deterministic floors for score/level/phases/risks/voices/tests, writes `.nexdev/artifacts/complexity_profile.json`, and indexes when state is available |
+| STRUCT-001 | Structured outputs | Strict decode, semantic validate, repair/reject | M4/M6 | Provider/Pipeline | `internal/contract/model_outputs.go`; `internal/provider/structured.go`; `internal/pipeline/repo_analyze.go`; `internal/pipeline/interview.go`; `internal/pipeline/complexity.go`; `internal/pipeline/design.go`; `internal/pipeline/hivemind.go`; `internal/pipeline/validate.go` | `go test ./internal/contract`; `go test ./internal/provider`; `go test ./internal/pipeline`; broader pipeline integration later | contracts; architecture; testing | implemented | Provider wrapper now strict-decodes, rejects unknown fields, validates semantically, repairs/rejects with capped attempts, and returns raw/usage metadata; M6 repo_analyze deterministically produces `contract.RepoAnalysis`; M6 interview/complexity/design/hivemind/validate consume `StructuredClient` with fake-provider repair coverage; raw provider-response persistence remains state/observability follow-up |
+| HIVEMIND-001 | Hivemind | Provider-backed multi-voice critique and synthesis artifact | M6 | Pipeline | `internal/pipeline/hivemind.go` | `go test ./internal/pipeline`; full pipeline integration later | architecture; contracts; testing | implemented | M6-HIVEMIND-VALIDATE uses `SlotHivemindVoice` and `SlotHivemindSynthesis`, configured voices, sequential default, bounded parallel option, design review artifact writing/indexing, structured repair coverage, and blocks on synthesis revise/block after writing review |
+| VALIDATE-001 | Validation | Provider-backed pre-plan sanity report | M6 | Pipeline | `internal/pipeline/validate.go` | `go test ./internal/pipeline`; full pipeline integration later | architecture; contracts; testing | implemented | M6-HIVEMIND-VALIDATE uses `SlotValidate`, writes validation report and validated design for pass/warn, blocks conflicts/blockers/block verdicts by default, and keeps requirements intact in prompt contract |
 | SECURITY-001 | Tool/path safety | Deny shell by default, path/symlink policy | M2/M15 | Security | `internal/config`, `internal/safety`, `internal/git` | `go test ./internal/config ./internal/safety`, `go test ./internal/safety`, `go test ./internal/git`; security fixtures later | architecture; contracts; testing | in_progress | M2 config/path, security helper, and project lock baselines verified; shell/network execution is not implemented; policy loading/enforcement integration, non-logging redaction boundaries, prompt-warning events, stale lock recovery, expected-file checks, and M15 fixtures remain follow-up |
 | LOCK-001 | Runtime paths | Single mutating process project lock | M2/M15 | Git/Security | `internal/git/project_lock.go` | `go test ./internal/git`; race/multi-process lifecycle tests later | architecture; contracts; testing | implemented | `.nexdev/run/project.lock` helper resolves through path sanitizer, acquires with exclusive create, writes pid/timestamp metadata, rejects held locks, and releases by removing the file; app/executor lifecycle wiring and stale-lock recovery remain follow-up |
 | OBS-001 | Observability | Structured slog baseline with redaction and canonical fields | M2/M14 | Observability | `internal/observability` | `go test ./internal/observability`; integration/no-leak/OTel/cost tests later | architecture; contracts; testing | in_progress | M2 logging baseline verified with JSON/text construction, level filtering, redacted messages/attrs, and field helpers; OTel, metrics, audit logs, runtime instrumentation, and cost ledger remain M14 |
@@ -2732,7 +2809,7 @@ This matrix is updated as implementation proceeds. M0 and M1 first-wave evidence
 | DETOUR-001 | Detour | Blocker/manual detour creates minimal spliced tasks | M3/M9 | State/Detour | `internal/detour/contracts.go`; `internal/state/detours.go` | `go test ./internal/detour`; `go test ./internal/state`; splice/generation tests later | architecture/contracts; testing | in_progress | Durable detour record repository verified; provider generation, depth/blocker policy, plan edit coordination, and task splicing remain M9 |
 | VERIFY-001 | Verify | Policy-gated verification commands with repair loop | M7/M16 | Pipeline | `internal/pipeline/verify.go` | verify tests/E2E | testing | planned | Command caps/timeouts |
 | HANDOFF-001 | Handoff | Write handoff, changed files, run summary | M7/M16 | Pipeline/Git | artifacts + git | golden/E2E | README/operating | planned | Anchored artifacts |
-| TEST-001 | Testing | Fake-provider full pipeline and security tests | M16/M19 | Test Infra | `internal/testutil`; scripts/tests later | `go test ./internal/testutil`; all gates later | testing | in_progress | M1-C9 verified shared fixture contracts for deterministic IDs/time/events/temp projects/auth roles; fake provider, fake worker, E2E, and security fixtures remain M16/M19 |
+| TEST-001 | Testing | Fake-provider full pipeline and security tests | M16/M19 | Test Infra | `internal/testutil`; `internal/provider/fake.go`; scripts/tests later | `go test ./internal/testutil`; `go test ./internal/provider`; all gates later | testing | in_progress | M1-C9 verified shared fixture contracts; M4 verified provider-owned fake provider; fake worker, E2E, and security fixtures remain M16/M19 |
 | DOC-001 | Docs | Docs and spec updated continuously | M0-M19 | Docs/Spec | docs | review | all docs | in_progress | M0 updated bootstrap status and architecture base strategy; continue next-action updates with each docs change |
 
 ## 15. Risk Register

@@ -189,6 +189,11 @@ Current M3 auxiliary repository coverage:
 - `go test ./internal/state` covers navigation append/list by project and run, from/to/reason/actor preservation, UTC timestamp normalization, stable ordering, and project/run foreign-key enforcement. Stage prerequisite enforcement remains M5/M10 coverage.
 - `go test ./internal/state` covers plan edit create/list by run, plan version before/after, edit type, target, patch JSON validation/round-trip, actor preservation, UTC timestamp normalization, stable ordering, and project/run foreign-key enforcement. Review mutation/version-increment integration and `plan_updated` event emission remain M7/M10 coverage.
 
+Current M3 task/blocker follow-up coverage:
+- `go test ./internal/state` covers additive migration version `5` for `nexdev_tasks` and `nexdev_blockers`, required indexes, migration from seeded geoffrussy-compatible state, and preservation of legacy `tasks` and `blockers` rows.
+- `go test ./internal/state` covers Nexdev task create/list/get-status-adjacent behavior through create/list/status update, `contract.TaskSpec` JSON slice round-trips, stable `plan_version`/`plan_order` listing, dependency reference validation, self/missing dependency rejection, acceptance-criteria validation, FK behavior, and unique `(run_id, plan_version, plan_order)` behavior.
+- `go test ./internal/state` covers Nexdev blocker create/list/resolve behavior, task/run/status filters, metadata JSON validation/round-trip, UTC timestamp normalization, FK behavior, and missing-row resolve failure.
+
 ### 3.7 CLI Smoke Tests
 
 Required as commands become implemented:
@@ -294,12 +299,14 @@ Implemented M1-C9 helpers:
 Deferred shared helpers:
 - `TempSQLiteStore(t)`.
 - `SeedGeoffrussyState(t, db)`.
-- `FakeProvider`.
 - `FakeWorker`.
 - `SSEClient` with reconnect and `Last-Event-ID`.
 - `AuthTokens` helper that creates observer/operator/admin tokens through public APIs after token repositories exist.
 - `GoldenPath(t, name)`.
 - OpenAPI request/response validation helper.
+
+Provider-owned fake helper:
+- `internal/provider.FakeProvider` is the canonical deterministic fake provider for package, pipeline, and E2E tests. It stays out of `internal/testutil` unless a later black-box adapter is needed.
 
 Fixture rules:
 - Tests may use fixture helpers.
@@ -343,6 +350,8 @@ Current fixture test command:
 - Repair attempts are capped.
 - Usage/cost metadata is recorded.
 - Provider errors are redacted.
+- Current M4 provider coverage: `go test ./internal/provider` covers valid decode, unknown-field rejection, repair success, repair cap failure, semantic validation failure without destination mutation, slot/model resolution through `Router.Resolve`, usage metadata capture from `provider.Response`, redacted provider errors, deterministic fake-provider calls by model/prompt, structured repair through `StructuredClient`, unrecoverable invalid fake responses, retryable and hard scripted errors, usage metadata, streaming chunks, model listing/discovery, optional authentication behavior, deterministic latency records without sleeps, and fake-provider disabled-by-default registry behavior.
+- Remaining M4/M16 provider coverage: end-to-end fake-provider integration after pipeline stages, CLI run wiring, SSE replay, artifact checks, and fake-provider E2E script coverage.
 
 ### Pipeline
 
@@ -351,6 +360,12 @@ Current fixture test command:
 - Every stage writes/indexes required artifacts.
 - Invalid navigation is rejected.
 - Resume uses persisted state.
+- Current M5 runner coverage: `go test ./internal/pipeline` covers canonical fake-stage execution order, prerequisite rejection through `ValidatePrerequisites`, status transition enforcement against persisted stage state, resume selection from `runs.current_stage` and `stage_runs`, completed/skipped checkpoint output JSON, blocked/failed error persistence, and persisted `stage_status`/`done` events through the M3 event repository.
+- Current M6 repo_analyze coverage: `go test ./internal/pipeline` covers deterministic language/framework/package-manager/test/lint/entrypoint detection, bounded excludes for `.git`/`.nexdev`/`node_modules`/`vendor`/large files, untrusted instruction capture with prompt-injection risk notes, `.env`/secret file avoidance, `.nexdev/artifacts/repo_analysis.json` JSON writing, artifact repository indexing when `*state.Store` is available, and `PipelineStage`/`StageOutputter` behavior including deterministic `Resume`.
+- Current M6 interview/complexity coverage: `go test ./internal/pipeline` covers provider-backed valid interview with trusted/untrusted prompt sections, underspecified interview blocking, yes/CI assumption conversion, invalid structured-output repair through `StructuredClient`, deterministic complexity levels, provider complexity refinement with deterministic verification floor enforcement, `.nexdev/artifacts/interview.json` and `.nexdev/artifacts/complexity_profile.json` JSON writing/indexing, and `PipelineStage`/`StageOutputter` resume/output behavior.
+- Current M6 design coverage: `go test ./internal/pipeline` covers provider-backed design generation through `provider.SlotDesign`, trusted/untrusted prompt sections, correction loop prompt feedback, max-iteration `BlockedError` for unresolved high-severity actionable findings, invalid structured-output repair, required section validation, `.nexdev/artifacts/design_draft.md` writing/indexing, and `PipelineStage`/`StageOutputter` resume/output behavior.
+- Current M6 hivemind/validate coverage: `go test ./internal/pipeline` covers provider-backed hivemind voice and synthesis calls through `provider.SlotHivemindVoice` and `provider.SlotHivemindSynthesis`, configured sequential and bounded-parallel voice behavior, security-voice prompt focus, revise/block `BlockedError` behavior after artifact persistence, invalid structured-output repair, `.nexdev/artifacts/design_review.json` writing/indexing, provider-backed validation through `provider.SlotValidate`, pass/warn/block behavior, conflict/blocker default blocking, `.nexdev/artifacts/validation_report.json` and `.nexdev/artifacts/validated_design.md` writing/indexing, and `PipelineStage`/`StageOutputter` resume/output behavior.
+- Remaining M6/M7 pipeline coverage: shared artifact helper and `artifact_updated` events, state repositories for `hivemind_results` and `validate_results`, schema validation for later stage artifacts, runner/app wiring that passes stage outputs into constructors, and full fake-provider pre-development pipeline through `handoff`.
 
 ### Review and Planning
 
@@ -359,6 +374,7 @@ Current fixture test command:
 - Missing dependencies fail.
 - Cycles fail.
 - Manual edit writes `plan_edit_events` and increments plan version.
+- Reviewed tasks persist through `nexdev_tasks` after plan validation; repository tests cover dependency references, but M7 remains responsible for cycle detection and plan mutation/version semantics.
 
 ### Executor and Steering
 
@@ -367,6 +383,7 @@ Current fixture test command:
 - Steering affects next prompt context.
 - Steering cannot override safety policy.
 - Pause/resume/cancel are context-aware.
+- Executor integration loads `nexdev_tasks`, updates task status through the state repository, and writes blockers to `nexdev_blockers` rather than legacy geoffrussy task/blocker tables.
 
 ### Detour
 
@@ -374,6 +391,7 @@ Current fixture test command:
 - Detour tasks validate against `TaskSpec`.
 - Tasks splice after trigger task.
 - Depth exceeded creates blocker and pauses.
+- Detour integration uses `nexdev_blockers` and `nexdev_tasks`; repository tests cover persistence only, while M9 owns task splice/depth policy behavior.
 
 ### Control Plane and Auth
 

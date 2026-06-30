@@ -289,6 +289,67 @@ var migrations = []Migration{
 			DROP TABLE IF EXISTS runs;
 		`,
 	},
+	{
+		Version:     5,
+		Description: "Add Nexdev task and blocker contract tables",
+		Up: `
+			CREATE TABLE IF NOT EXISTS nexdev_tasks (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT NOT NULL,
+				phase_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL,
+				expected_files_json TEXT NOT NULL DEFAULT '[]',
+				dependencies_json TEXT NOT NULL DEFAULT '[]',
+				acceptance_criteria_json TEXT NOT NULL DEFAULT '[]',
+				test_commands_json TEXT NOT NULL DEFAULT '[]',
+				risk_level TEXT NOT NULL,
+				required_tools_json TEXT NOT NULL DEFAULT '[]',
+				notes_json TEXT NOT NULL DEFAULT '[]',
+				status TEXT NOT NULL,
+				plan_version INTEGER NOT NULL DEFAULT 1,
+				plan_order INTEGER NOT NULL,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id),
+				UNIQUE(run_id, plan_version, plan_order)
+			);
+
+			CREATE TABLE IF NOT EXISTS nexdev_blockers (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT NOT NULL,
+				task_id TEXT,
+				reason TEXT NOT NULL,
+				description TEXT NOT NULL,
+				status TEXT NOT NULL,
+				resolution TEXT,
+				metadata_json TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT NOT NULL,
+				resolved_at TEXT,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id),
+				FOREIGN KEY (task_id) REFERENCES nexdev_tasks(id)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_nexdev_tasks_run_order ON nexdev_tasks(run_id, plan_version, plan_order);
+			CREATE INDEX IF NOT EXISTS idx_nexdev_tasks_run_status ON nexdev_tasks(run_id, status);
+			CREATE INDEX IF NOT EXISTS idx_nexdev_tasks_phase ON nexdev_tasks(phase_id);
+			CREATE INDEX IF NOT EXISTS idx_nexdev_blockers_run_status ON nexdev_blockers(run_id, status);
+			CREATE INDEX IF NOT EXISTS idx_nexdev_blockers_task ON nexdev_blockers(task_id);
+		`,
+		Down: `
+			DROP INDEX IF EXISTS idx_nexdev_blockers_task;
+			DROP INDEX IF EXISTS idx_nexdev_blockers_run_status;
+			DROP INDEX IF EXISTS idx_nexdev_tasks_phase;
+			DROP INDEX IF EXISTS idx_nexdev_tasks_run_status;
+			DROP INDEX IF EXISTS idx_nexdev_tasks_run_order;
+			DROP TABLE IF EXISTS nexdev_blockers;
+			DROP TABLE IF EXISTS nexdev_tasks;
+		`,
+	},
 }
 
 // MigrationManager handles database migrations

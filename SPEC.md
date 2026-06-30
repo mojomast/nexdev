@@ -941,8 +941,27 @@ Required artifacts:
 
 Keep the geoffrussy provider interface as the canonical boundary, then extend via optional capability interfaces.
 
+For v0.1, the imported geoffrussy interface remains the concrete compatibility boundary for existing provider implementations. That interface uses provider-local authentication/model methods and string prompts/responses:
+
 ```go
 type Provider interface {
+    Name() string
+    Authenticate(apiKey string) error
+    IsAuthenticated() bool
+    ListModels() ([]Model, error)
+    DiscoverModels() ([]Model, error)
+    Call(ctx context.Context, model string, prompt string) (*Response, error)
+    Stream(ctx context.Context, model string, prompt string) (<-chan string, error)
+    GetRateLimitInfo() (*RateLimitInfo, error)
+    GetQuotaInfo() (*QuotaInfo, error)
+    SupportsCodingPlan() bool
+}
+```
+
+The request-shaped interface below is the target shape for future provider capability adapters if a later milestone needs richer request metadata, typed stream chunks, or context-aware auth/list operations. Until such an adapter is explicitly implemented, stages MUST treat the imported `Provider` plus Nexdev router/structured wrapper as the authoritative provider boundary.
+
+```go
+type RequestProvider interface {
     Name() string
     Authenticate(ctx context.Context, apiKey string) error
     ListModels(ctx context.Context) ([]Model, error)
