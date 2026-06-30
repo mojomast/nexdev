@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,22 @@ func TestConfigureOTelEnabledRequiresEndpointWithoutNetwork(t *testing.T) {
 	_, err := ConfigureOTel(OTelConfig{Enabled: true})
 	if err == nil || !strings.Contains(err.Error(), "endpoint") {
 		t.Fatalf("expected endpoint validation error, got %v", err)
+	}
+}
+
+func TestCostGuardDeniesBudgetExceededBeforeLaunch(t *testing.T) {
+	guard := NewCostGuard(CostGuardConfig{Enabled: true, MaxRunUSD: 0.01, MaxStageUSD: 1, Prices: map[string]Price{"fake/fake-model": {InputPer1KUSD: 1, OutputPer1KUSD: 1}}})
+	err := guard.CheckProviderLaunch(context.Background(), "fake", "fake-model", "hivemind", 10, 10, 1)
+	if !errors.Is(err, ErrCostBudgetExceeded) {
+		t.Fatalf("CheckProviderLaunch error = %v, want ErrCostBudgetExceeded", err)
+	}
+}
+
+func TestCostGuardCanDenyUnknownPrice(t *testing.T) {
+	guard := NewCostGuard(CostGuardConfig{Enabled: true, StopOnUnknownPrice: true})
+	err := guard.CheckProviderLaunch(context.Background(), "unknown", "model", "hivemind", 1, 1, 1)
+	if !errors.Is(err, ErrCostBudgetExceeded) {
+		t.Fatalf("unknown price error = %v, want ErrCostBudgetExceeded", err)
 	}
 }
 

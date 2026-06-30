@@ -29,6 +29,11 @@ type HivemindStageConfig struct {
 	MaxConcurrency    int
 	MaxRepairAttempts int
 	Cycle             int
+	CostGuard         ProviderLaunchGuard
+}
+
+type ProviderLaunchGuard interface {
+	CheckProviderLaunch(ctx context.Context, providerName, model, stage string, promptTokens, completionTokens, parallelCalls int) error
 }
 
 type HivemindStage struct {
@@ -76,12 +81,21 @@ func (s *HivemindStage) Run(ctx context.Context, env StageEnv) error {
 	if err := s.Validate(ctx, env); err != nil {
 		return err
 	}
+	if err := emitPromptInjectionWarnings(ctx, env, StageHivemind, "repo_context", append(append([]string{}, s.config.RepoAnalysis.RepoInstructions...), s.config.RepoAnalysis.RiskNotes...)); err != nil {
+		return err
+	}
 	voices := s.voices()
+	if err := s.preflightProviderLaunch(ctx, provider.SlotHivemindVoice, len(voices)); err != nil {
+		return err
+	}
 	critiques, err := s.runVoices(ctx, voices)
 	if err != nil {
 		return err
 	}
 	var synthesis contract.HivemindSynthesis
+	if err := s.preflightProviderLaunch(ctx, provider.SlotHivemindSynthesis, 1); err != nil {
+		return err
+	}
 	result, err := s.client.CallStructured(ctx, provider.SlotHivemindSynthesis, s.buildSynthesisPrompt(critiques), &synthesis, provider.StructuredOptions{
 		MaxRepairAttempts: effectiveRepairAttempts(s.config.MaxRepairAttempts),
 		Validate: func(candidate any) error {
@@ -110,6 +124,17 @@ func (s *HivemindStage) Run(ctx context.Context, env StageEnv) error {
 		return &BlockedError{Reason: "hivemind blocked design: " + strings.Join(nonEmptyStrings(synthesis.RequiredChanges), "; ")}
 	}
 	return nil
+}
+
+func (s *HivemindStage) preflightProviderLaunch(ctx context.Context, slot provider.Slot, calls int) error {
+	if s.config.CostGuard == nil {
+		return nil
+	}
+	route, err := s.client.Router.Resolve(slot)
+	if err != nil {
+		return err
+	}
+	return s.config.CostGuard.CheckProviderLaunch(ctx, route.Provider, route.Model, string(StageHivemind), 4000, 2000, calls)
 }
 
 func (s *HivemindStage) Resume(ctx context.Context, env StageEnv) error { return s.Run(ctx, env) }

@@ -24,7 +24,7 @@ Project-local runtime lock:
 - Acquisition: create parent directories, then create the lock file atomically with exclusive-create semantics.
 - Metadata: best-effort pid and UTC acquisition timestamp text.
 - Release: close and remove the lock file.
-- Contention: an existing lock file is reported as held; stale lock recovery is deferred to security hardening.
+- Contention: an existing lock file is reported as held. M15 stale-lock policy can report old lock metadata as stale, but it does not probe processes or remove the lock automatically.
 
 ## 2. OpenAPI Contract
 
@@ -461,7 +461,7 @@ Fake provider behavior:
 - Scripts match by model and/or prompt matcher and consume responses deterministically in order.
 - Scripted responses cover valid content, invalid JSON for structured repair tests, unrecoverable invalid content, retryable API errors, hard errors, usage metadata, latency recorded in call history without sleeping, and streaming chunks.
 - `ListModels`, `DiscoverModels`, `GetRateLimitInfo`, `GetQuotaInfo`, `SupportsCodingPlan`, and optional auth-required behavior are implemented for provider-test and CI scenarios.
-- M6 pipeline tests should use `StructuredClient` with the fake provider for JSON-producing stages. M16 E2E wiring should construct the fake explicitly rather than relying on the default real-provider registry.
+- M6 pipeline tests and M16 fake-run wiring use `StructuredClient` with the fake provider for JSON-producing stages. M16 constructs the fake explicitly through `NewFakeProvider` plus `NewRouterWithRegistry`; it must not rely on or mutate the default real-provider registry.
 
 ## 8. Executor, Steering, and Detour Contracts
 
@@ -535,7 +535,7 @@ Config validation:
 Path safety baseline:
 - `internal/safety/paths.go`
 - Cleans paths, resolves relative paths against the project root, rejects traversal and absolute paths outside root, rejects writes under `.git`, evaluates existing symlink ancestors for write paths, and supports basic deny globs such as `secrets/**` and `*.pem`.
-- File locks and task expected-file enforcement remain later executor/policy integration work.
+- `ToolPolicy.ValidateTaskWritePath` also enforces active file-lock globs and task expected-file globs where owned write helpers call it.
 
 Security baseline contracts:
 - `internal/safety/redaction.go` exposes `RedactSecrets(text string) string`. It deterministically replaces known secret forms with `[REDACTED]`, including provider API key shapes, bearer tokens, password/token/key assignments, private key blocks, SSH keys, and `.env` style secret assignments.
@@ -544,9 +544,9 @@ Security baseline contracts:
 - No command execution or network tool implementation is provided by the M2 security baseline.
 
 Remaining M2/M15 security gaps:
-- Redaction is wired into the new `internal/observability` slog handler baseline, but app startup and provider/event/artifact/prompt/API boundaries do not yet route through it.
-- Prompt-injection findings are not yet emitted as `security_warning` events or surfaced by repo analysis/review stages.
-- Tool policy loading from `.nexdev/tool_policy.yaml`, executor/verify enforcement, output caps, controlled environments, file locks, task expected-file enforcement, MCP poisoning fixtures, and audit logs remain follow-up work.
+- Redaction is wired into logs, events, API errors, audit/cost records, provider metadata, TUI display, and M15 artifact writes for implemented boundaries; full fake-provider E2E no-leak coverage remains M16/M19 follow-up.
+- Hivemind-owned untrusted repo context now emits `security_warning` events when prompt-injection findings are detected and state/run scope is present. Repo analysis/review surfacing can be expanded later.
+- Tool policy loading from `.nexdev/tool_policy.yaml`, verify command execution, output caps, controlled environments, and real shell/network runner enforcement remain follow-up work.
 
 Open decision:
 - Define exact precedence between duplicate `develop.commit_on_*` and `git.commit_on_*` fields during config implementation.
@@ -555,7 +555,7 @@ Open decision:
 
 Authoritative implementation:
 - `internal/controlplane/auth.go`
-- Status: M10 adds HTTP auth middleware, opaque token generation/hash helpers, HMAC-SHA256 token hashing with server secret, constant-time auth through hash lookup, role enforcement, expiry/revocation rejection, and `last_used_at` touch after successful authentication. Token command UX remains a CLI follow-up.
+- Status: M10 adds HTTP auth middleware, opaque token generation/hash helpers, HMAC-SHA256 token hashing with server secret, constant-time auth through hash lookup, role enforcement, expiry/revocation rejection, and `last_used_at` touch after successful authentication. M15 adds deterministic local auth throttling with audit records. Token command UX is implemented by M12.
 
 Roles:
 - `none` for unauthenticated routes such as `GET /health`.
@@ -734,6 +734,7 @@ M14 behavior:
 - `observability.UsageRecorder` implements `provider.StructuredCallRecorder` and writes redacted `cost_ledger` rows plus optional `audit_log` rows through the state repositories.
 - `provider.StructuredClient` invokes the optional recorder with redacted provider/model/usage/latency/error metadata and does not pass prompts to the recorder. Previous raw responses are redacted before repair prompts.
 - `observability.ConfigureOTel` is a no-op when disabled. If enabled without an endpoint it fails validation; exporter/network setup remains unwired and is not required by tests.
+- `observability.CostGuard` performs deterministic preflight checks against configured run/stage budget caps and optional unknown-price denial before provider launches. Hivemind uses this hook before voice and synthesis calls when configured.
 
 Current deferrals:
 - Runtime metrics and OTel exporters are not wired; future work must keep them disabled by default and network-free in normal tests.
@@ -749,14 +750,15 @@ Rules:
 - `nexdev steer` maps to `POST /steer` semantics.
 - `nexdev init --import-devussy PATH` is required by migration plan.
 
-Current M12 implementation:
+Current M12/M16 implementation:
 - Root command identity and global flags are now `nexdev`-oriented and include `--project-dir`, `--config`, `--state-dir`, `--no-tui`, `--json`, `--log-level`, `--profile`, `--control-url`, and `--token`.
 - `nexdev serve` opens project-local state, acquires `.nexdev/run/project.lock`, builds the M10/M11 control-plane server, and releases the lock during shutdown.
 - `nexdev auth token create|list|revoke` manages project-local opaque bearer tokens. Token hashes are stored in SQLite; plaintext token values are returned only from `create`.
 - `nexdev status --json`, `events`, `provider list`, and `artifacts list` read through the same control-plane handler locally or through HTTP when `--control-url` is set.
 - `nexdev pause`, `resume --control-url`, `cancel`, `steer`, `detour`, `blockers resolve`, and `provider test` are client adapters over HTTP control-plane routes. Without `--control-url`, mutating control commands fail with a structured CLI error instead of touching state directly.
-- `nexdev run`, `verify`, `history`, and `artifacts open` are present in the command tree. `history` reads persisted events; `run`, `verify`, and artifact content opening return explicit deferred errors unless a wired control-plane service is supplied for `run`.
-- Full `run --fake-provider --no-tui --json`, verify/handoff commands, and provider-test service execution remain later milestone work because their lower-level services are not yet complete. Detour generation is wired through M9 `WorkflowManager` and the provider router/structured wrapper; it will fail through that service path if provider credentials/configuration are unavailable.
+- `nexdev run --fake-provider --no-tui --json [request]` runs the deterministic local fake-provider pipeline through `internal/app`. Local `run` without `--fake-provider` returns an explicit deferred error until real-provider run wiring is assigned.
+- `nexdev run` output in JSON mode includes `project_id`, `run_id`, `status`, artifact paths, and `event_count`. The fake run writes required stage artifacts under `.nexdev/artifacts/`, persists events, and completes at canonical stage `complete`.
+- `verify`, `history`, and `artifacts open` are present in the command tree. `history` reads persisted events; standalone `verify` and artifact content opening remain deferred command work. Provider-test service execution also remains later milestone work. Detour generation is wired through M9 `WorkflowManager` and the provider router/structured wrapper; it will fail through that service path if provider credentials/configuration are unavailable.
 
 ## 14.1 Terminal TUI Contract
 
@@ -804,6 +806,7 @@ Implemented first-wave tests:
 - `go test ./internal/observability` validates M2 logging construction, redaction, level filtering, JSON/text modes, and required field helper keys.
 - `go test ./internal/controlplane` validates M11 MCP descriptors, per-tool role enforcement, input validation, state read surfaces, detour/blocker/control delegation, and redacted structured MCP errors.
 - `go test ./internal/app ./internal/cli` validates M12 lifecycle project/lock setup, remote-bind safety via config/app startup, hash-only token storage, command registration, token-create output, and CLI mutation error handling when no control-plane URL is supplied.
+- `go test ./internal/app ./internal/cli ./internal/pipeline` validates M16 fake-provider app run completion, fake `run` CLI wiring, verify/handoff artifacts, changed-file manifest generation, verify events, and artifact redaction coverage.
 
 ## 16. Test Fixture Contract
 
@@ -814,4 +817,4 @@ Authoritative test-only package:
 Rules:
 - Production code must not import `internal/testutil`.
 - Fixture helpers should be extended only when an owning feature test needs them.
-- Fake provider, fake worker, SSE replay client, golden-path helpers, and security fixture repos remain deferred; no fake-provider E2E script exists yet.
+- Fake provider is provider-owned and fake worker is executor-owned. `scripts/e2e_fake_provider.sh` now covers the black-box fake-provider golden path, including SSE replay and no-leak artifact checks. A reusable testutil SSE client, golden-path helper, and broader hostile fixture repos remain deferred until an owning test needs them.

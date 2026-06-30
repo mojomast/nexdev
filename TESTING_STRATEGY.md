@@ -11,7 +11,7 @@ Current baseline after M0/M1 first-wave work:
 - Imported geoffrussy baseline tests exist and pass.
 - M1 contract packages now have package-level tests.
 - Shared black-box test fixture contracts live in `internal/testutil`.
-- No CI workflows or fake-provider E2E scripts exist yet.
+- A deterministic fake-provider E2E script exists at `scripts/e2e_fake_provider.sh`; CI workflow files remain uncreated.
 
 Current valid commands include:
 - `go test ./internal/contract`
@@ -30,6 +30,7 @@ Current valid commands include:
 - `go test ./...`
 - `go vet ./...`
 - `go mod verify`
+- `./scripts/e2e_fake_provider.sh`
 
 Current orchestrator-verified M1 commands:
 - `go test ./...`
@@ -38,7 +39,7 @@ Current orchestrator-verified M1 commands:
 
 ## 2. Required Final Gates
 
-These are required for full implementation/release readiness; the fake-provider E2E script does not exist yet:
+These are required for full implementation/release readiness:
 
 - `go test ./...`
 - `go test -race ./...`
@@ -213,7 +214,8 @@ Required as commands become implemented:
 Current M12 CLI/app coverage:
 - `go test ./internal/app` covers project-local runtime opening, `.nexdev/run/project.lock` acquire/release for server lifecycle, project row creation, non-loopback/no-auth startup rejection through config/app validation, and hash-only token persistence.
 - `go test ./internal/cli` covers M12 command registration, root command identity, token create JSON output, and control mutation commands refusing to bypass the HTTP control-plane service when `--control-url` is absent.
-- Remaining CLI coverage: `serve` live listener smoke, remote `events --follow` SSE client, full `run --fake-provider --no-tui --json`, provider-test service execution, verify/handoff commands, and E2E fake-provider script.
+- Current M16 CLI/app coverage: `go test ./internal/app ./internal/cli` covers full local `run --fake-provider --no-tui --json` completion, JSON output shape, artifacts/events presence, and fake-provider opt-in wiring.
+- Remaining CLI coverage: `serve` live listener smoke, remote `events --follow` SSE client, provider-test service execution, and standalone verify/handoff commands.
 
 ### 3.8 Fake Provider and Fake Worker Tests
 
@@ -235,6 +237,10 @@ Fake worker requirements:
 - Structured blocker emission.
 - Verify failure emission.
 - Pause/resume/cancel handling.
+
+Current M16 E2E coverage:
+- `scripts/e2e_fake_provider.sh` creates a temp repo, initializes project-local state, runs `nexdev run --fake-provider --no-tui --json`, starts the loopback control plane, verifies `/events`, verifies `/runs/{run_id}/stream` replay with `Last-Event-ID`, checks required artifacts and changed files, verifies the run reached `complete`, and scans artifacts for known fixture secret leaks.
+- The script uses fake provider and fake worker paths only. It does not call real providers and does not execute shell/network tools inside the worker pipeline.
 
 ### 3.9 Security Tests
 
@@ -335,7 +341,8 @@ Current fixture test command:
 - Traversal and symlink escape writes fail.
 - Current M2 baseline coverage: `go test ./internal/config ./internal/safety` validates typed Nexdev defaults/profile/auth-auto/remote-bind/unknown-top-level-key behavior and path traversal, absolute escape, `.git`, symlink escape, and basic deny-glob rejection.
 - Current M2 security baseline coverage: `go test ./internal/safety` validates secret redaction, `.env` assignment scrubbing, bearer token scrubbing, private key scrubbing, prompt-injection warning detection, default deny for shell/network, write deny globs, and wildcard shell rejection outside `dev`.
-- Remaining config/path/security coverage: full global/project/env/flag precedence wiring, unsafe CORS/profile combinations, app-level logger wiring, redaction integration for events/prompts/API, prompt-injection `security_warning` events, tool policy file loading, executor/verify enforcement, command output caps, controlled env, file locks, task expected-file enforcement, MCP poisoning fixtures, and audit logs after owning integrations exist.
+- Current M15 security hardening coverage: `go test ./internal/safety` validates task expected-file and file-lock write checks; `go test ./internal/git` validates stale-lock safe failure without automatic deletion; `go test ./internal/controlplane` validates auth throttling/audit and redacted API errors; `go test ./internal/pipeline` validates artifact/prompt redaction, Hivemind `security_warning` events, and cost preflight denial before provider calls; `go test ./internal/observability` validates cost guard budget/unknown-price denial.
+- Remaining config/path/security coverage: full global/project/env/flag precedence wiring, unsafe CORS/profile combinations, tool policy file loading, real verify command execution/output caps/controlled env, MCP poisoning fixtures beyond current descriptor/input checks, and slow-client overflow stress.
 
 ### State
 
@@ -358,7 +365,8 @@ Current fixture test command:
 - Usage/cost metadata is recorded.
 - Provider errors are redacted.
 - Current M4 provider coverage: `go test ./internal/provider` covers valid decode, unknown-field rejection, repair success, repair cap failure, semantic validation failure without destination mutation, slot/model resolution through `Router.Resolve`, usage metadata capture from `provider.Response`, redacted provider errors, deterministic fake-provider calls by model/prompt, structured repair through `StructuredClient`, unrecoverable invalid fake responses, retryable and hard scripted errors, usage metadata, streaming chunks, model listing/discovery, optional authentication behavior, deterministic latency records without sleeps, and fake-provider disabled-by-default registry behavior.
-- Remaining M4/M16 provider coverage: end-to-end fake-provider integration after pipeline stages, CLI run wiring, SSE replay, artifact checks, and fake-provider E2E script coverage.
+- Current M16 provider integration coverage: `go test ./internal/app ./internal/cli` and `./scripts/e2e_fake_provider.sh` cover explicit fake-provider app wiring, CLI run wiring, SSE replay, artifact checks, changed files, and no known fixture secret leakage.
+- Remaining provider coverage: real-provider opt-in smoke and provider-test service execution.
 
 ### Pipeline
 
@@ -372,7 +380,8 @@ Current fixture test command:
 - Current M6 interview/complexity coverage: `go test ./internal/pipeline` covers provider-backed valid interview with trusted/untrusted prompt sections, underspecified interview blocking, yes/CI assumption conversion, invalid structured-output repair through `StructuredClient`, deterministic complexity levels, provider complexity refinement with deterministic verification floor enforcement, `.nexdev/artifacts/interview.json` and `.nexdev/artifacts/complexity_profile.json` JSON writing/indexing, and `PipelineStage`/`StageOutputter` resume/output behavior.
 - Current M6 design coverage: `go test ./internal/pipeline` covers provider-backed design generation through `provider.SlotDesign`, trusted/untrusted prompt sections, correction loop prompt feedback, max-iteration `BlockedError` for unresolved high-severity actionable findings, invalid structured-output repair, required section validation, `.nexdev/artifacts/design_draft.md` writing/indexing, and `PipelineStage`/`StageOutputter` resume/output behavior.
 - Current M6 hivemind/validate coverage: `go test ./internal/pipeline` covers provider-backed hivemind voice and synthesis calls through `provider.SlotHivemindVoice` and `provider.SlotHivemindSynthesis`, configured sequential and bounded-parallel voice behavior, security-voice prompt focus, revise/block `BlockedError` behavior after artifact persistence, invalid structured-output repair, `.nexdev/artifacts/design_review.json` writing/indexing, provider-backed validation through `provider.SlotValidate`, pass/warn/block behavior, conflict/blocker default blocking, `.nexdev/artifacts/validation_report.json` and `.nexdev/artifacts/validated_design.md` writing/indexing, and `PipelineStage`/`StageOutputter` resume/output behavior.
-- Remaining M6/M7 pipeline coverage: shared artifact helper and `artifact_updated` events, state repositories for `hivemind_results` and `validate_results`, schema validation for later stage artifacts, runner/app wiring that passes stage outputs into constructors, and full fake-provider pre-development pipeline through `handoff`.
+- Current M16 pipeline coverage: `go test ./internal/pipeline` covers verify/handoff artifacts, changed-file manifest generation, verify events, denied-command reporting, run summary, and handoff redaction. `go test ./internal/app` covers runner/app wiring that passes stage outputs through a full fake-provider run from `repo_analyze` to `complete`.
+- Remaining M6/M7/M16 pipeline coverage: shared artifact helper and `artifact_updated` events, state repositories for `hivemind_results` and `validate_results`, schema validation for later stage artifacts, and real policy-gated verify repair behavior.
 
 ### Review and Planning
 
@@ -417,7 +426,8 @@ Current fixture test command:
 - JSON errors use `ErrorResponse`.
 - Remote bind without auth fails.
 - Current M10 coverage: `go test ./internal/controlplane` covers loopback/no-auth health and status, startup rejection for non-loopback/no-auth, bearer-token observer/operator role behavior, forbidden observer mutation, SSE persisted replay with `Last-Event-ID`, SSE frame shape/no `[DONE]`, and detour route delegation with persisted `detour_created` event evidence.
-- Remaining M10/M12/M15 coverage: CLI token create/list/revoke commands, slow-client overflow event behavior under stress, full OpenAPI response validation, app-level `nexdev serve` wiring, task/config/provider mutation route service wiring, MCP per-tool dispatch, auth failure audit/rate limiting, and token rotation UX.
+- Current M15 control-plane coverage adds deterministic auth rate limiting with `429` responses and `auth_throttle` audit records plus redacted error response details.
+- Remaining M10/M12/M15 coverage: slow-client overflow event behavior under stress, full OpenAPI response validation, task/config/provider mutation route service wiring, and provider-test service execution.
 - Current M12 app/CLI coverage adds project-local `nexdev serve` lifecycle wiring, project lock acquire/release, token create/list/revoke command paths, and CLI mutation error handling. Remaining M12/M15 coverage: live listener smoke, remote SSE follow, slow-client overflow stress, provider-test service wiring, and full OpenAPI response validation.
 
 ### Observability
@@ -428,7 +438,8 @@ Current fixture test command:
 - Field helpers emit the canonical `SPEC.md` section 17 keys.
 - Current M2 coverage: `go test ./internal/observability` validates redaction for messages, attrs, grouped/with attrs, level filtering, JSON/text construction, level parsing, and required field helper keys.
 - Current M14 coverage: `go test ./internal/observability` validates disabled-by-default OTel behavior, endpoint validation when enabled, correlation-aware provider usage recording, cost estimation, cost ledger persistence, audit record persistence, and metadata redaction. `go test ./internal/state` validates audit/cost migrations and repositories plus event-payload redaction before persistence. `go test ./internal/provider` validates structured-call usage recorder hooks and redacted raw-response handoff. `go test ./internal/controlplane` validates auth failure/forbidden/operator control audit records and recursive error-detail redaction coverage through existing error paths.
-- Remaining M14/M15 coverage: broader no-secret-leak integration tests across logs/events/artifacts/prompts/API/error responses/audit/cost using hostile fixture repos, cost guard enforcement before parallel launches, run-summary cost aggregation, and optional OTel exporter tests that remain disabled and network-free by default.
+- Current M15 observability/security coverage adds cost guard preflight denial before Hivemind parallel/provider launches and no-secret-leak assertions across artifact/prompt/API-error/audit/cost/event-backed boundaries represented in owned package tests.
+- Remaining M14/M15 coverage: full fake-provider E2E no-secret-leak fixtures, run-summary cost aggregation, slow-client overflow stress, and optional OTel exporter tests that remain disabled and network-free by default.
 
 ### MCP
 

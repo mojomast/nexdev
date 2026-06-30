@@ -140,6 +140,12 @@ Current M8 develop/executor behavior:
 - Basic in-process controls exist for pause, resume, cancel, skip, current task, and steering ingestion. Steering is persisted and included in prompt context as last-N messages plus summary, but it cannot override safety policy or acceptance criteria.
 - Real LLM code execution, shell tools, control-plane handlers, project-lock wiring, and full steering prompt context from requirements/design/repo artifacts remain follow-up work.
 
+Current M16 fake-run behavior:
+- `internal/app.RunFakeProvider` wires the existing pipeline runner from `repo_analyze` through `complete` for local `nexdev run --fake-provider --no-tui --json` execution. The fake provider is constructed explicitly with a local registry entry and is not added to the global production provider registry.
+- The fake run uses deterministic provider scripts plus `executor.FakeWorker`; the develop task writes only `generated/fake_e2e.txt` through expected-file/path checks. It does not execute shell commands or open network connections.
+- `internal/pipeline.VerifyStage` records a verify report and verify events. Commands, if supplied, are reported as default-policy denied rather than executed. `HandoffStage` writes changed-files, run-summary, and handoff artifacts. `CompleteStage` marks the canonical terminal stage.
+- The M16 E2E script creates a temp project, runs the full fake pipeline, starts the loopback control plane, validates persisted event/SSE replay, checks artifacts and changed files, and scans artifacts for known fixture secret leaks.
+
 Current M9 detour behavior:
 - `internal/detour.WorkflowManager` is the Nexdev first-class detour workflow beside the legacy imported `detour.Manager`. It captures the trigger task, open blocker ID when available, neighboring tasks, phase, design-summary/artifact placeholder, repo context, source, reason, and current depth into `RequestContext` before generation.
 - Detour generation uses `provider.StructuredClient` through `provider.SlotPlanDetail` because no dedicated provider slot exists yet. A later provider/config task can add a detour slot if the orchestrator wants separate model routing.
@@ -229,10 +235,10 @@ Before a task modifies files:
 Shell/network tools are denied by default and require explicit policy allowance.
 Command execution and network tool implementations do not exist in this M2 baseline; later executor/verify work must call the policy evaluator before running any command or network-capable tool.
 
-Project lock baseline:
+Project lock behavior:
 - `internal/git.ProjectLockPath` resolves `.nexdev/run/project.lock` under the project root through `internal/safety.PathSanitizer`.
 - `internal/git.AcquireProjectLock` creates `.nexdev/run`, atomically creates the lock file with exclusive create semantics, writes pid and UTC acquisition timestamp metadata, and removes the file on release.
-- Existing lock files are treated as held. Stale lock detection, process liveness checks, and integration with app/executor lifecycle are M15/M21 follow-ups.
+- `internal/git.AcquireProjectLockWithPolicy` can deterministically identify old lock metadata as stale, but it does not probe processes or delete the lock automatically. Recovery is a manual operator action after verifying no Nexdev process owns the project.
 
 ## 10. Observability Flow
 
@@ -250,6 +256,13 @@ Current M14 observability/audit/cost behavior:
 - `observability.UsageRecorder` implements the provider recorder hook and persists cost ledger entries plus optional audit records when a state store and project scope are supplied. Correlation can come from `observability.ContextWithCorrelation`; app wiring supplies project/latest-run defaults for app-created provider clients.
 - `controlplane.Authenticator` writes audit records for failed auth, forbidden authorization, and allowed operator/admin control requests when auth is enabled.
 - `observability.ConfigureOTel` is inert when disabled and validates explicit endpoint configuration when enabled. Exporters remain unwired, so normal tests require no network access.
+
+Current M15 security hardening behavior:
+- `internal/safety.ToolPolicy.ValidateTaskWritePath` combines default write policy, deny globs, active file-lock globs, and task expected-file globs for owned write helpers. Shell and network execution remain absent unless a later policy-gated runner is assigned.
+- Stage artifact writes scrub decoded JSON string values before persistence, keeping artifact JSON valid while removing secret-shaped content.
+- Hivemind emits persisted `security_warning` events for prompt-injection findings in untrusted repo context when a concrete state store and run are available.
+- Control-plane auth uses a deterministic local throttle for authenticated routes; throttled requests return `429` and produce audit records when audit storage is wired.
+- `observability.CostGuard` can deny provider launches before execution; Hivemind calls it before voice and synthesis provider launches when configured.
 
 M14 follow-ups:
 - Pipeline/executor/app boundaries should pass richer request/event/stage/task correlation context into provider calls.

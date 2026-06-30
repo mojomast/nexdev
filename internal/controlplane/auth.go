@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -94,6 +95,7 @@ type Authenticator struct {
 	secret    []byte
 	now       func() time.Time
 	newID     func(prefix string) string
+	limiter   AuthThrottle
 }
 
 type AuthenticatorConfig struct {
@@ -103,6 +105,18 @@ type AuthenticatorConfig struct {
 	ServerSecret []byte
 	Now          func() time.Time
 	NewID        func(prefix string) string
+	Throttle     AuthThrottle
+}
+
+type AuthThrottle interface {
+	Allow(key string, now time.Time) bool
+}
+
+type LocalAuthThrottle struct {
+	mu       sync.Mutex
+	limit    int
+	window   time.Duration
+	attempts map[string][]time.Time
 }
 
 type AuthenticatedActor struct {
@@ -126,7 +140,43 @@ func NewAuthenticator(cfg AuthenticatorConfig) (*Authenticator, error) {
 	if newID == nil {
 		newID = func(prefix string) string { return fmt.Sprintf("%s_%d", prefix, auditIDCounter.Add(1)) }
 	}
-	return &Authenticator{store: cfg.Store, audits: cfg.AuditStore, projectID: cfg.ProjectID, secret: append([]byte(nil), cfg.ServerSecret...), now: now, newID: newID}, nil
+	return &Authenticator{store: cfg.Store, audits: cfg.AuditStore, projectID: cfg.ProjectID, secret: append([]byte(nil), cfg.ServerSecret...), now: now, newID: newID, limiter: cfg.Throttle}, nil
+}
+
+func NewLocalAuthThrottle(limit int, window time.Duration) *LocalAuthThrottle {
+	if limit <= 0 {
+		limit = 10
+	}
+	if window <= 0 {
+		window = time.Minute
+	}
+	return &LocalAuthThrottle{limit: limit, window: window, attempts: map[string][]time.Time{}}
+}
+
+func (t *LocalAuthThrottle) Allow(key string, now time.Time) bool {
+	if t == nil {
+		return true
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		key = "unknown"
+	}
+	now = now.UTC()
+	cutoff := now.Add(-t.window)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	kept := t.attempts[key][:0]
+	for _, at := range t.attempts[key] {
+		if at.After(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	if len(kept) >= t.limit {
+		t.attempts[key] = kept
+		return false
+	}
+	t.attempts[key] = append(kept, now)
+	return true
 }
 
 func GenerateOpaqueToken() (string, error) {
@@ -193,6 +243,11 @@ func (a *Authenticator) Middleware(required Role, next http.Handler) http.Handle
 			next.ServeHTTP(w, r)
 			return
 		}
+		if a.limiter != nil && !a.limiter.Allow(authThrottleKey(r), a.now()) {
+			a.auditRequest(r, AuthenticatedActor{}, "auth_throttle", "denied")
+			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "too many authentication attempts", nil)
+			return
+		}
 		actor, err := a.Authenticate(r.Context(), r.Header.Get("Authorization"))
 		if err != nil {
 			a.auditRequest(r, AuthenticatedActor{}, "auth", "failed")
@@ -209,6 +264,23 @@ func (a *Authenticator) Middleware(required Role, next http.Handler) http.Handle
 		}
 		next.ServeHTTP(w, r.WithContext(withActor(r.Context(), actor)))
 	})
+}
+
+func authThrottleKey(r *http.Request) string {
+	if r == nil {
+		return "unknown"
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		return strings.TrimSpace(strings.Split(forwarded, ",")[0])
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	if r.RemoteAddr != "" {
+		return r.RemoteAddr
+	}
+	return "unknown"
 }
 
 func (a *Authenticator) auditRequest(r *http.Request, actor AuthenticatedActor, action, outcome string) {

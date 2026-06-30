@@ -189,7 +189,7 @@ func writeStageArtifact(ctx context.Context, env StageEnv, projectRoot, relPath 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(payload, "", "  ")
+	data, err := json.MarshalIndent(redactedArtifactPayload(payload), "", "  ")
 	if err != nil {
 		return err
 	}
@@ -225,6 +225,68 @@ func writeStageArtifact(ctx context.Context, env StageEnv, projectRoot, relPath 
 		CreatedAt: now,
 		UpdatedAt: now,
 	})
+}
+
+func redactedArtifactPayload(payload any) any {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return safety.RedactSecrets(fmt.Sprint(payload))
+	}
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return safety.RedactSecrets(string(data))
+	}
+	return redactJSONValue(decoded)
+}
+
+func redactJSONValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return safety.RedactSecrets(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = redactJSONValue(item)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = redactJSONValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func emitPromptInjectionWarnings(ctx context.Context, env StageEnv, stage Stage, sourceLabel string, values []string) error {
+	store, ok := env.Store.(*state.Store)
+	if !ok || store == nil || env.Project == nil || env.Run == nil {
+		return nil
+	}
+	for i, value := range values {
+		findings := safety.DetectPromptInjection(value)
+		if len(findings) == 0 {
+			continue
+		}
+		payload := map[string]any{"stage": string(stage), "source": sourceLabel, "findings": findings}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		_, err = store.PersistEvent(ctx, contract.EventEnvelope{EventID: stageWarningEventID(env.Project.ProjectID(), env.Run.RunID(), string(stage), sourceLabel, i), RunID: env.Run.RunID(), Stage: string(stage), Type: contract.EventTypeSecurityWarning, Source: contract.EventSourceCore, Payload: data})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stageWarningEventID(projectID, runID, stage, source string, index int) string {
+	seed := fmt.Sprintf("%s:%s:%s:%s:%d", projectID, runID, stage, source, index)
+	hash := sha256.Sum256([]byte(seed))
+	return "evt_security_" + hex.EncodeToString(hash[:8])
 }
 
 func stageArtifactID(projectID, runID, kind string) string {

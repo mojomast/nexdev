@@ -38,6 +38,11 @@ type ToolPolicy struct {
 	Network   BasicToolPolicy
 }
 
+type WriteValidationOptions struct {
+	ExpectedFiles []string
+	LockedFiles   []string
+}
+
 type BasicToolPolicy struct {
 	Default string
 }
@@ -136,6 +141,37 @@ func (p ToolPolicy) ValidateWritePath(path string) error {
 		}
 	}
 	return fmt.Errorf("write path %q is not allowed by policy", path)
+}
+
+func (p ToolPolicy) ValidateTaskWritePath(path string, opts WriteValidationOptions) error {
+	if err := p.ValidateWritePath(path); err != nil {
+		return err
+	}
+	rel, err := cleanProjectRelative(path)
+	if err != nil {
+		return err
+	}
+	if matchesAnyDenyGlob(rel, opts.LockedFiles) {
+		return fmt.Errorf("write path %q is locked", path)
+	}
+	if len(opts.ExpectedFiles) == 0 {
+		return errors.New("task expected files are required for writes")
+	}
+	if !matchesAnyDenyGlob(rel, opts.ExpectedFiles) {
+		return fmt.Errorf("write path %q is outside task expected files", path)
+	}
+	return nil
+}
+
+func cleanProjectRelative(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("path cannot be empty")
+	}
+	rel := filepath.ToSlash(filepath.Clean(path))
+	if filepath.IsAbs(path) || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", fmt.Errorf("write path %q must be project-relative", path)
+	}
+	return rel, nil
 }
 
 func isWildcardShellRule(command string) bool {

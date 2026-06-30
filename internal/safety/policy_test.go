@@ -51,3 +51,19 @@ func TestToolPolicyAllowsExactShellCommandOnly(t *testing.T) {
 		t.Fatal("non-matching shell command should remain denied")
 	}
 }
+
+func TestToolPolicyTaskWriteRequiresExpectedAndUnlockedPath(t *testing.T) {
+	policy := DefaultToolPolicy()
+	if err := policy.ValidateTaskWritePath("src/main.go", WriteValidationOptions{}); err == nil {
+		t.Fatal("write without expected files should fail")
+	}
+	if err := policy.ValidateTaskWritePath("src/main.go", WriteValidationOptions{ExpectedFiles: []string{"docs/**"}}); err == nil {
+		t.Fatal("write outside expected files should fail")
+	}
+	if err := policy.ValidateTaskWritePath("src/main.go", WriteValidationOptions{ExpectedFiles: []string{"src/**"}, LockedFiles: []string{"src/main.go"}}); err == nil {
+		t.Fatal("write to locked file should fail")
+	}
+	if err := policy.ValidateTaskWritePath("src/main.go", WriteValidationOptions{ExpectedFiles: []string{"src/**"}}); err != nil {
+		t.Fatalf("expected write to pass: %v", err)
+	}
+}

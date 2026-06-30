@@ -113,6 +113,7 @@ var (
 	runYes       bool
 	runCheap     bool
 	runBrrrr     bool
+	runFake      bool
 )
 
 var tuiCmd = &cobra.Command{
@@ -136,13 +137,26 @@ var tuiCmd = &cobra.Command{
 }
 
 var runCmd = &cobra.Command{
-	Use:   "run",
+	Use:   "run [request]",
 	Short: "Start or resume a Nexdev pipeline run",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		request := strings.TrimSpace(strings.Join(args, " "))
 		if controlURL != "" {
-			return controlPost(cmd, "/runs", map[string]any{"from_stage": runFromStage, "stage": runStage, "yes": runYes, "cheap": runCheap, "brrrr": runBrrrr})
+			return controlPost(cmd, "/runs", map[string]any{"prompt": request, "from_stage": runFromStage, "stage": runStage, "yes": runYes, "cheap": runCheap, "brrrr": runBrrrr})
 		}
-		return fmt.Errorf("local run wiring is deferred until fake-provider/full runner integration is assigned; use --control-url with a wired server when available")
+		if !runFake {
+			return fmt.Errorf("local run requires --fake-provider until real provider run wiring is assigned")
+		}
+		rt, err := app.OpenRuntime(cmd.Context(), appOptions(), true)
+		if err != nil {
+			return err
+		}
+		defer rt.Close()
+		result, err := rt.RunFakeProvider(cmd.Context(), app.RunRequest{Prompt: request, FromStage: runFromStage, Stage: runStage, Yes: runYes, Cheap: runCheap, Brrrr: runBrrrr, FakeProvider: true})
+		if err != nil {
+			return err
+		}
+		return printValue(cmd, result)
 	},
 }
 
@@ -235,6 +249,7 @@ func init() {
 	runCmd.Flags().BoolVar(&runYes, "yes", false, "assume conservative defaults")
 	runCmd.Flags().BoolVar(&runCheap, "cheap", false, "prefer cheap execution profile")
 	runCmd.Flags().BoolVar(&runBrrrr, "brrrr", false, "prefer maximum safe parallelism")
+	runCmd.Flags().BoolVar(&runFake, "fake-provider", false, "run with the deterministic constructor-only fake provider")
 	authTokenCreateCmd.Flags().StringVar(&authTokenRole, "role", "operator", "role: observer, operator, admin")
 	authTokenCreateCmd.Flags().StringVar(&authTokenName, "name", "", "token name")
 	authTokenCreateCmd.Flags().StringVar(&authTokenTTL, "ttl", "30d", "token TTL, e.g. 30d, 12h, 0")

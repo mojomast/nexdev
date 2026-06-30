@@ -36,7 +36,7 @@ func TestInterviewStageValidWritesArtifactAndIndexes(t *testing.T) {
 			"acceptance_signals":["go test ./... passes"],
 			"risk_tolerance":"low",
 			"target_users":["developers"],
-			"raw_transcript":"Add a status command"
+			"raw_transcript":"Add a status command token=sk-1234567890abcdef"
 		}`}},
 	}}))
 	stage := NewInterviewStage(newInterviewComplexityClient(t, fake), InterviewStageConfig{
@@ -60,6 +60,9 @@ func TestInterviewStageValidWritesArtifactAndIndexes(t *testing.T) {
 	if artifact.RawTranscript == "" {
 		t.Fatalf("interview artifact missing raw transcript: %#v", artifact)
 	}
+	if strings.Contains(string(artifactData), "sk-1234567890abcdef") {
+		t.Fatalf("interview artifact leaked secret: %s", artifactData)
+	}
 	artifacts, err := store.ListArtifacts(ctx, state.ArtifactListOptions{ProjectID: projectID, RunID: runID, Kind: string(contract.ArtifactKindInterview)})
 	if err != nil {
 		t.Fatalf("ListArtifacts failed: %v", err)
@@ -70,6 +73,9 @@ func TestInterviewStageValidWritesArtifactAndIndexes(t *testing.T) {
 	calls := fake.Calls()
 	if len(calls) != 1 || !strings.Contains(calls[0].Prompt, "UNTRUSTED REPO CONTEXT") || !strings.Contains(calls[0].Prompt, "TASK") {
 		t.Fatalf("prompt did not include required sections: %#v", calls)
+	}
+	if strings.Contains(calls[0].Prompt, "sk-1234567890abcdef") {
+		t.Fatalf("interview prompt leaked secret: %s", calls[0].Prompt)
 	}
 }
 

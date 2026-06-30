@@ -21,6 +21,8 @@ type ServerConfig struct {
 	ClientQueueMaxEvents int
 	ReplayMaxEvents      int
 	RetryMS              int
+	AuthThrottleLimit    int
+	AuthThrottleWindow   time.Duration
 }
 
 type RunStarter interface {
@@ -64,6 +66,12 @@ func NewServer(cfg ServerConfig, store *state.Store, opts ...Option) (*Server, e
 	if cfg.RetryMS <= 0 {
 		cfg.RetryMS = 3000
 	}
+	if cfg.AuthThrottleLimit <= 0 {
+		cfg.AuthThrottleLimit = 10
+	}
+	if cfg.AuthThrottleWindow <= 0 {
+		cfg.AuthThrottleWindow = time.Minute
+	}
 	if err := RequireAuthForBind(cfg.Bind, cfg.AuthRequired); err != nil {
 		return nil, err
 	}
@@ -72,7 +80,7 @@ func NewServer(cfg ServerConfig, store *state.Store, opts ...Option) (*Server, e
 		opt(server)
 	}
 	if cfg.AuthRequired {
-		auth, err := NewAuthenticator(AuthenticatorConfig{Store: store, AuditStore: store, ProjectID: cfg.ProjectID, ServerSecret: cfg.ServerSecret})
+		auth, err := NewAuthenticator(AuthenticatorConfig{Store: store, AuditStore: store, ProjectID: cfg.ProjectID, ServerSecret: cfg.ServerSecret, Throttle: NewLocalAuthThrottle(cfg.AuthThrottleLimit, cfg.AuthThrottleWindow)})
 		if err != nil {
 			return nil, err
 		}

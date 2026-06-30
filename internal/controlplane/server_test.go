@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,6 +106,41 @@ func TestAuthenticatedRouteBehavior(t *testing.T) {
 	}
 }
 
+func TestAuthFailuresAreRateLimitedAndAudited(t *testing.T) {
+	store := newControlPlaneTestStore(t)
+	seedProject(t, store, "proj_throttle")
+	seedRun(t, store, "proj_throttle", "run_throttle")
+	server, err := NewServer(ServerConfig{Bind: "127.0.0.1", AuthRequired: true, ServerSecret: []byte("server-secret"), ProjectID: "proj_throttle", AuthThrottleLimit: 2, AuthThrottleWindow: time.Minute}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/status", nil)
+		req.RemoteAddr = "198.51.100.10:1234"
+		req.Header.Set("Authorization", "Bearer invalid-token")
+		server.Handler().ServeHTTP(rec, req)
+		if i < 2 && rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want unauthorized", i+1, rec.Code)
+		}
+		if i == 2 && rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("attempt %d status = %d, want rate limited body=%s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	audits, err := store.ListAuditRecords(context.Background(), state.AuditListOptions{ProjectID: "proj_throttle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var throttled bool
+	for _, audit := range audits {
+		throttled = throttled || audit.Action == "auth_throttle" && audit.Outcome == "denied"
+	}
+	if !throttled {
+		t.Fatalf("missing auth_throttle audit record: %#v", audits)
+	}
+}
+
 func TestSSEReplayUsesPersistedEventsAndLastEventID(t *testing.T) {
 	store := newControlPlaneTestStore(t)
 	seedProject(t, store, "proj_sse")
@@ -171,6 +207,35 @@ func TestDetourRouteCallsRequesterAndSurfacesPersistedResult(t *testing.T) {
 	if len(events) != 1 || events[0].Type != contract.EventTypeDetourCreated {
 		t.Fatalf("persisted events = %#v", events)
 	}
+}
+
+func TestControlPlaneErrorResponseRedactsSecrets(t *testing.T) {
+	store := newControlPlaneTestStore(t)
+	seedProject(t, store, "proj_redact")
+	seedRun(t, store, "proj_redact", "run_redact")
+	server, err := NewServer(ServerConfig{Bind: "127.0.0.1", ProjectID: "proj_redact"}, store, WithDetourRequester(errorDetourRequester{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/detour", strings.NewReader(`{"project_id":"proj_redact","run_id":"run_redact","trigger_task_id":"T1.01","reason":"blocked"}`))
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("/detour status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sk-1234567890abcdef") || !strings.Contains(rec.Body.String(), "[REDACTED]") {
+		t.Fatalf("error response did not redact secret: %s", rec.Body.String())
+	}
+}
+
+type errorDetourRequester struct{}
+
+func (errorDetourRequester) Request(context.Context, contract.DetourRequest) (contract.DetourResult, error) {
+	return contract.DetourResult{}, fmt.Errorf("provider failed with token=sk-1234567890abcdef")
+}
+
+func (errorDetourRequester) RequestForBlocker(context.Context, string, string) (contract.DetourResult, error) {
+	return contract.DetourResult{}, nil
 }
 
 type fakeDetourRequester struct {

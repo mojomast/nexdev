@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProjectLockPath(t *testing.T) {
@@ -82,5 +83,35 @@ func TestProjectLockRejectsSymlinkEscape(t *testing.T) {
 	if lock, err := AcquireProjectLock(root); err == nil {
 		_ = lock.Release()
 		t.Fatal("AcquireProjectLock succeeded for symlink escape")
+	}
+}
+
+func TestProjectLockStalePolicyFailsSafeWithoutRemoval(t *testing.T) {
+	root := t.TempDir()
+	lockPath, err := ProjectLockPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	staleAt := time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(lockPath, []byte("pid=999999\nacquired_at="+staleAt.Format(time.RFC3339Nano)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = AcquireProjectLockWithPolicy(root, StaleLockPolicy{MaxAge: time.Hour, Now: func() time.Time { return staleAt.Add(2 * time.Hour) }})
+	if !errors.Is(err, ErrProjectLockStale) {
+		t.Fatalf("AcquireProjectLockWithPolicy error = %v, want ErrProjectLockStale", err)
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("stale lock should remain for manual recovery: %v", err)
+	}
+	metadata, err := ReadProjectLockMetadata(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.PID != 999999 || !metadata.AcquiredAt.Equal(staleAt) {
+		t.Fatalf("metadata = %+v", metadata)
 	}
 }

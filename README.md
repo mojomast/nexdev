@@ -6,9 +6,9 @@ It brings together Go execution foundations, a pre-development planning pipeline
 
 ## Current Status
 
-This repository has completed M0 bootstrap, M1 first-wave contract freeze, the first CLI/app lifecycle wiring for the local control plane, and the first terminal TUI control client. M12 provides `nexdev serve`, project-local control-plane token commands, and control-plane client adapters over the M10 HTTP/SSE server and M11 MCP routes. M13 adds `nexdev tui` as a terminal-only client over the same control-plane/state service boundaries.
+This repository has completed M0 bootstrap, M1 first-wave contract freeze, the first CLI/app lifecycle wiring for the local control plane, the first terminal TUI control client, and a deterministic fake-provider smoke pipeline. M16 wires `nexdev run --fake-provider --no-tui --json` through the in-process app pipeline with fake provider and fake worker dependencies.
 
-Product behavior is still incomplete. Full pipeline execution, verify/handoff, fake-provider E2E, provider-test service wiring, web UI, and release behavior must not be assumed until their later milestones land.
+Product behavior is still incomplete. Real-provider execution, policy-gated shell verification, provider-test service wiring, web UI, and release behavior must not be assumed until their later milestones land.
 
 Current verified commands:
 - `go test ./...`
@@ -21,12 +21,18 @@ Local control-plane smoke:
 - `nexdev status --json`
 - `nexdev tui`
 
+Fake-provider E2E smoke:
+- `nexdev run --fake-provider --no-tui --json "implement fake smoke"`
+- `./scripts/e2e_fake_provider.sh`
+
 Safe defaults:
 - `nexdev serve` binds to `127.0.0.1:7432` by default.
 - Binding a non-loopback address without auth fails before listening.
 - The project lock is held while `serve` is running and released on shutdown.
 - Token plaintext is printed only when created; SQLite stores only the token hash and metadata.
 - Quitting the TUI exits only the terminal client; cancel/skip actions require explicit confirmation and route through control-plane services.
+- The fake-provider run path is explicit opt-in only; fake is not registered in the production provider registry.
+- Fake E2E uses the safe fake worker and does not execute shell or network commands.
 
 ## Source Of Truth
 

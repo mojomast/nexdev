@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -99,6 +100,56 @@ func TestHivemindStageParallelPreservesVoiceOrder(t *testing.T) {
 	if len(got) != 3 || got[0].Voice != "skeptic" || got[1].Voice != "ux" || got[2].Voice != "test" {
 		t.Fatalf("parallel result order changed: %#v", got)
 	}
+}
+
+func TestHivemindStageCostPreflightDeniesBeforeProviderLaunch(t *testing.T) {
+	fake := provider.NewFakeProvider(provider.WithFakeScripts([]provider.FakeScript{
+		{Name: "skeptic", PromptMatch: hivemindVoicePrompt("skeptic"), Responses: []provider.FakeResponse{{Content: hivemindCritiqueJSON("skeptic", "approve", "low")}}},
+	}))
+	cfg := validHivemindConfig(t.TempDir(), []string{"skeptic"})
+	cfg.Parallel = true
+	cfg.CostGuard = denyLaunchGuard{}
+	stage := NewHivemindStage(newHivemindValidateClient(t, fake), cfg)
+	err := stage.Run(context.Background(), StageEnv{Project: testRepoAnalyzeProject{id: "proj_hivemind_cost"}})
+	if err == nil || !strings.Contains(err.Error(), "budget exceeded") {
+		t.Fatalf("expected cost preflight denial, got %v", err)
+	}
+	if calls := fake.Calls(); len(calls) != 0 {
+		t.Fatalf("provider was called despite cost preflight denial: %#v", calls)
+	}
+}
+
+func TestHivemindStageEmitsPromptInjectionSecurityWarnings(t *testing.T) {
+	ctx := context.Background()
+	store := newRepoAnalyzeStore(t)
+	projectID := "proj_hivemind_warning"
+	runID := "run_hivemind_warning"
+	createStageProjectAndRun(t, ctx, store, projectID, runID)
+	fake := provider.NewFakeProvider(provider.WithFakeScripts([]provider.FakeScript{
+		{Name: "security", PromptMatch: hivemindVoicePrompt("security"), Responses: []provider.FakeResponse{{Content: hivemindCritiqueJSON("security", "approve", "low")}}},
+		{Name: "synthesis", PromptContains: "UNTRUSTED CRITIQUES", Responses: []provider.FakeResponse{{Content: hivemindSynthesisJSON("approve", nil)}}},
+	}))
+	stage := NewHivemindStage(newHivemindValidateClient(t, fake), validHivemindConfig(t.TempDir(), []string{"security"}))
+	if err := stage.Run(ctx, StageEnv{Project: testRepoAnalyzeProject{id: projectID}, Run: testRepoAnalyzeRun{id: runID}, Store: store}); err != nil {
+		t.Fatalf("HivemindStage.Run failed: %v", err)
+	}
+	events, err := store.ListEvents(ctx, state.EventListOptions{RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawWarning bool
+	for _, event := range events {
+		sawWarning = sawWarning || event.Type == contract.EventTypeSecurityWarning
+	}
+	if !sawWarning {
+		t.Fatalf("security_warning event not persisted: %#v", events)
+	}
+}
+
+type denyLaunchGuard struct{}
+
+func (denyLaunchGuard) CheckProviderLaunch(context.Context, string, string, string, int, int, int) error {
+	return fmt.Errorf("budget exceeded")
 }
 
 func TestHivemindStageInterfaceValidateAndResume(t *testing.T) {
