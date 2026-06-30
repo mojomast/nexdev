@@ -1,6 +1,9 @@
 package state
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Stage represents the current pipeline stage
 type Stage string
@@ -43,6 +46,109 @@ type Project struct {
 	CreatedAt    time.Time
 	CurrentStage Stage
 	CurrentPhase string
+}
+
+// Run represents a Nexdev pipeline run persisted in migration version 4.
+type Run struct {
+	ID           string
+	ProjectID    string
+	Status       string
+	CurrentStage string
+	StartedAt    time.Time
+	CompletedAt  *time.Time
+	CancelledAt  *time.Time
+	Metadata     map[string]any
+}
+
+// StageRun represents one attempt at a canonical or pseudo pipeline stage.
+type StageRun struct {
+	ID          string
+	RunID       string
+	Stage       string
+	Status      string
+	Attempt     int
+	StartedAt   *time.Time
+	CompletedAt *time.Time
+	Error       map[string]any
+	Output      map[string]any
+}
+
+// Artifact represents a SQLite-indexed pipeline artifact. Disk files are written elsewhere.
+type Artifact struct {
+	ID        string
+	ProjectID string
+	RunID     string
+	Kind      string
+	Path      string
+	SHA256    string
+	Version   int
+	Metadata  map[string]any
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// AuthToken stores only the server-side token hash and authorization metadata.
+type AuthToken struct {
+	ID         string
+	TokenHash  string
+	Role       string
+	Name       string
+	CreatedAt  time.Time
+	ExpiresAt  *time.Time
+	RevokedAt  *time.Time
+	LastUsedAt *time.Time
+}
+
+// SteeringEvent is durable operator context for a run or task.
+type SteeringEvent struct {
+	ID            string
+	ProjectID     string
+	RunID         string
+	TaskID        string
+	Message       string
+	Summary       string
+	Source        string
+	CreatedByRole string
+	CreatedAt     time.Time
+}
+
+// DetourRecord persists the result of a manual or automatic detour request.
+type DetourRecord struct {
+	ID            string
+	ProjectID     string
+	RunID         string
+	TriggerTaskID string
+	Reason        string
+	Source        string
+	Depth         int
+	Result        json.RawMessage
+	CreatedAt     time.Time
+}
+
+// NavigationEvent records explicit stage navigation decisions.
+type NavigationEvent struct {
+	ID        string
+	ProjectID string
+	RunID     string
+	FromStage string
+	ToStage   string
+	Reason    string
+	Actor     string
+	CreatedAt time.Time
+}
+
+// PlanEditEvent records review-time plan mutations and version changes.
+type PlanEditEvent struct {
+	ID                string
+	ProjectID         string
+	RunID             string
+	PlanVersionBefore int
+	PlanVersionAfter  int
+	EditType          string
+	TargetID          string
+	Patch             json.RawMessage
+	Actor             string
+	CreatedAt         time.Time
 }
 
 // InterviewData contains all gathered requirements

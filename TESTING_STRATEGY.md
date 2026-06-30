@@ -176,6 +176,19 @@ Current M3 event repository coverage:
 - `go test ./internal/state` covers persisted event load with contract version and UTC RFC3339Nano timestamp behavior, monotonic per-run sequence allocation, independent sequences across runs, replay after sequence, replay after event ID for `Last-Event-ID` mapping, unsafe caller-provided sequence rejection, duplicate event ID failure, and concurrent publishers on one run.
 - M10 SSE tests still need to cover persist-before-broadcast at the publisher boundary, HTTP `Last-Event-ID` reconnect behavior, heartbeat frames, bounded client queues, and slow-client overflow handling.
 
+Current M3 run/stage/artifact repository coverage:
+- `go test ./internal/state` covers run create/read/status/current-stage/complete/cancel/list behavior, UTC RFC3339Nano timestamp normalization, metadata JSON round-trip, stable run ordering, and run foreign-key enforcement.
+- `go test ./internal/state` covers stage-run create/read/status/output/error/attempt/complete/list behavior, default attempt handling, output/error JSON round-trip, stable stage-run ordering, and stage-run foreign-key enforcement.
+- `go test ./internal/state` covers artifact upsert/get/list behavior, project/run/kind filters, metadata JSON round-trip, UTC timestamp normalization, stable artifact ordering, and project/run foreign-key enforcement.
+- M5/M7 integration tests still need to cover runner status-transition enforcement, artifact file writing, artifact schema validation, `artifact_updated` event emission, and full pipeline artifact indexing.
+
+Current M3 auxiliary repository coverage:
+- `go test ./internal/state` covers auth token create/get/get-by-hash/list/revoke/touch behavior, unique token hash enforcement, UTC RFC3339Nano timestamp normalization, and stable token ordering. Auth hashing, constant-time compare, role middleware, expiry rejection, and token plaintext generation remain M10 auth/security coverage.
+- `go test ./internal/state` covers steering append/list by run and task, message/summary/source/created-role preservation, UTC timestamp normalization, stable ordering, and project/run foreign-key enforcement. Steering summarization and prompt context selection remain M8 coverage.
+- `go test ./internal/state` covers detour create/list by run and trigger, result JSON validation/round-trip, source/depth/reason preservation, UTC timestamp normalization, stable ordering, and project/run foreign-key enforcement. Detour generation, blocker/depth policy, and splice integration remain M9 coverage.
+- `go test ./internal/state` covers navigation append/list by project and run, from/to/reason/actor preservation, UTC timestamp normalization, stable ordering, and project/run foreign-key enforcement. Stage prerequisite enforcement remains M5/M10 coverage.
+- `go test ./internal/state` covers plan edit create/list by run, plan version before/after, edit type, target, patch JSON validation/round-trip, actor preservation, UTC timestamp normalization, stable ordering, and project/run foreign-key enforcement. Review mutation/version-increment integration and `plan_updated` event emission remain M7/M10 coverage.
+
 ### 3.7 CLI Smoke Tests
 
 Required as commands become implemented:
@@ -318,6 +331,9 @@ Current fixture test command:
 - WAL/FK/busy timeout enabled.
 - Event sequence is monotonic per run under serial and concurrent publishers.
 - Event replay supports after-sequence and after-event-ID queries for later `/events` and SSE reconnect handlers.
+- Run, stage-run, and artifact repositories cover create/read/update/list paths and preserve JSON metadata/output/error fields.
+- Auth token, steering, detour, navigation, and plan edit repositories cover repository-level persistence, stable ordering, UTC timestamps, JSON round-trips where applicable, and FK/unique constraints.
+- Pipeline runner, artifact file writer, auth middleware, detour manager, review editor, and control-plane snapshot tests remain later milestone coverage.
 
 ### Provider
 

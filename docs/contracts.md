@@ -170,7 +170,7 @@ Rules:
 
 Authoritative migration location:
 - `internal/state/migrations.go`
-- Status: M1-C5 additive skeleton exists as migration version `4` using the imported geoffrussy migration runner. The M3 event repository is implemented in `internal/state/events.go`; other Nexdev repositories remain follow-up work.
+- Status: M1-C5 additive skeleton exists as migration version `4` using the imported geoffrussy migration runner. M3 repositories now cover events, runs, stage runs, artifacts, auth tokens, steering events, detour records, navigation events, and plan edit events.
 
 Required SQLite behavior:
 - Foreign keys on.
@@ -232,6 +232,20 @@ M10 SSE follow-ups:
 - Broadcast only the envelope returned from `PersistEvent`, not the caller's pre-persist envelope, so subscribers see the durable sequence and UTC timestamp.
 - Map HTTP `Last-Event-ID` to `EventListOptions.AfterEventID`, enforce configured replay limits, and handle `ErrEventNotFound` as the control-plane replay policy defines.
 - Keep heartbeat, per-client queues, slow-client closure, and SSE frame formatting in `internal/controlplane`; the state repository only owns durable event persistence and replay queries.
+
+Auxiliary state repository behavior:
+- `Store.CreateAuthToken`, `GetAuthToken`, `GetAuthTokenByHash`, `ListAuthTokens`, `RevokeAuthToken`, and `TouchAuthTokenLastUsed` persist only `token_hash` plus role/name/created/expires/revoked/last-used metadata. Token generation, hashing, expiry authorization, and constant-time comparison remain control-plane/auth behavior.
+- `Store.AppendSteeringEvent` and `ListSteeringEvents` preserve message, summary, source, created role, task scope, and UTC timestamp. Prompt context selection, summarization, and safety non-override enforcement remain M8 executor/steering work.
+- `Store.CreateDetourRecord` and `ListDetourRecords` preserve trigger task, reason, source, depth, result JSON, and UTC timestamp. Provider-backed detour generation, depth policy enforcement, blocker creation, and plan splicing remain M9 detour work.
+- `Store.AppendNavigationEvent` and `ListNavigationEvents` preserve project/run scope, from/to stages, reason, actor, and UTC timestamp. Stage prerequisite enforcement and runner navigation decisions remain M5/M10 service behavior.
+- `Store.CreatePlanEditEvent` and `ListPlanEditEventsByRun` preserve plan version before/after, edit type, target, patch JSON, actor, and UTC timestamp. Review editing, plan mutation, version increments, and `plan_updated` event emission remain M7/M10 work.
+- Repository list methods return deterministic ascending order by persisted UTC timestamp and ID. JSON fields are validated before write and round-tripped as raw JSON bytes.
+
+Auxiliary follow-ups:
+- M8 must consume steering repository rows when building task prompts and must keep steering unable to override safety policy, schemas, or acceptance criteria.
+- M9 must write detour records after validated detour creation and coordinate plan edits/events for spliced tasks.
+- M10 must use auth token repository lookups from middleware, update `last_used_at` only after successful auth, enforce expiry/revocation/roles, and expose token management without ever returning bearer token plaintext from state.
+- M11 must use the same authenticated actor/role model for MCP tool calls and plan/steering mutations.
 
 ## 5. Stage Contract
 
@@ -514,7 +528,7 @@ Artifact index fields:
 
 Authoritative first-wave Go structs:
 - `internal/contract/artifacts.go`
-- Status: artifact kind constants, manifest/item structs, changed-file manifest, run summary, stage summary, and provider usage structs exist for downstream M1 workers.
+- Status: artifact kind constants, manifest/item structs, changed-file manifest, run summary, stage summary, and provider usage structs exist for downstream M1 workers. The M3 state repository indexes artifact rows only; artifact file writing and manifest rendering remain pipeline/M7 work.
 
 ## 13. Observability Contract
 
