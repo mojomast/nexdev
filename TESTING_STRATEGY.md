@@ -1,23 +1,41 @@
 # Nexdev Testing Strategy
 
-**Status:** Planning artifact. No implementation tests exist yet.  
+**Status:** M0 bootstrap complete; M1 C1-C9 contract and fixture tests are verified.  
 **Canonical requirements:** `SPEC.md` section 24 plus security and acceptance criteria sections.  
 **Execution model:** Tests are created alongside implementation by domain workers.
 
 ## 1. Current Baseline
 
-At the end of the planning session:
-- The repo is planning-only.
-- There is no Go module yet.
-- There are no `*_test.go` files.
-- There are no scripts or CI workflows yet.
-- No project-specific test command is currently valid.
+Current baseline after M0/M1 first-wave work:
+- The repo is a Go module at `github.com/mojomast/nexdev`.
+- Imported geoffrussy baseline tests exist and pass.
+- M1 contract packages now have package-level tests.
+- Shared black-box test fixture contracts live in `internal/testutil`.
+- No CI workflows or fake-provider E2E scripts exist yet.
 
-After M0 bootstrap, the first valid command should be `go test ./...`.
+Current valid commands include:
+- `go test ./internal/contract`
+- `go test ./internal/config ./internal/safety`
+- `go test ./internal/safety`
+- `go test ./internal/pipeline`
+- `go test ./internal/state`
+- `go test ./internal/provider`
+- `go test ./internal/executor ./internal/detour ./internal/steering`
+- `go test ./internal/controlplane`
+- `go test ./internal/testutil`
+- `go test ./internal/observability`
+- `go test ./...`
+- `go vet ./...`
+- `go mod verify`
+
+Current orchestrator-verified M1 commands:
+- `go test ./...`
+- `go vet ./...`
+- `go mod verify`
 
 ## 2. Required Final Gates
 
-These are required after implementation exists:
+These are required for full implementation/release readiness; the fake-provider E2E script does not exist yet:
 
 - `go test ./...`
 - `go test -race ./...`
@@ -111,9 +129,12 @@ Current first-wave coverage:
 - Verifies common schema names required by the first-wave contract task.
 - Verifies event contract version, required event names, and event sources.
 
+Current codegen status:
+- Generated OpenAPI codegen remains deferred; `api/openapi.yaml` is the machine contract until the owning API/codegen task creates generated types and drift checks.
+
 Required checks:
 - OpenAPI file validates.
-- Generated Go types compile.
+- Generated Go types compile after the M1 integration/codegen path is settled.
 - Every implemented route has request/response tests.
 - Every JSON error uses `ErrorResponse`.
 - Mutating routes require the expected role.
@@ -145,6 +166,10 @@ Required checks:
 - Bounded transaction and retry behavior handles write contention.
 - Required tables and indexes exist.
 - Event `(run_id, sequence)` uniqueness holds under concurrency.
+
+Current M1-C5 coverage:
+- `go test ./internal/state` covers empty migration to latest, idempotency through the existing migration tests, seeded geoffrussy-compatible migration from version `3` to Nexdev version `4`, required Nexdev table/index existence, event `(run_id, sequence)` uniqueness, foreign-key enforcement, WAL mode, and configured busy timeout.
+- Full event repository concurrency and bounded transaction contention tests remain M3 work.
 
 ### 3.7 CLI Smoke Tests
 
@@ -235,20 +260,23 @@ Recommended env gates:
 
 Use a shared test helper package only for black-box helpers. Production code must not import test fixtures.
 
-Recommended shared package:
+Current shared package:
 - `internal/testutil`
 
-Recommended helpers:
-- `TempProject(t)`.
+Implemented M1-C9 helpers:
+- `TempProject(t)` creates a minimal temp project tree with `nexdev.yaml`, `README.md`, `.nexdev/artifacts`, `.nexdev/state`, loopback control-plane default, and no `.env` or secret-bearing files.
+- `FakeClock` exposes deterministic UTC `Now`, `Set`, and `Advance` methods.
+- `FakeIDGenerator` creates stable sortable fixture IDs for project, run, event, token, and caller-supplied prefixes.
+- `EventRecorder` records `internal/contract.EventEnvelope` values, returns copies, sorts by sequence, and asserts sequence/type ordering.
+- Auth role helpers expose current `internal/controlplane` role fixtures and route role lookup without token storage behavior.
+
+Deferred shared helpers:
 - `TempSQLiteStore(t)`.
 - `SeedGeoffrussyState(t, db)`.
-- `FakeClock`.
-- `FakeIDGenerator`.
 - `FakeProvider`.
 - `FakeWorker`.
-- `EventRecorder`.
 - `SSEClient` with reconnect and `Last-Event-ID`.
-- `AuthTokens` helper that creates observer/operator/admin tokens through public APIs.
+- `AuthTokens` helper that creates observer/operator/admin tokens through public APIs after token repositories exist.
 - `GoldenPath(t, name)`.
 - OpenAPI request/response validation helper.
 
@@ -257,6 +285,9 @@ Fixture rules:
 - Production code may not.
 - Shared fixtures must not expose package internals.
 - Security fixture repos must be treated as hostile input.
+
+Current fixture test command:
+- `go test ./internal/testutil`
 
 ## 5. Per-Domain Acceptance Tests
 
@@ -267,6 +298,9 @@ Fixture rules:
 - Unknown top-level keys reject unless experimental override is enabled.
 - `trusted-lan` remote bind without auth fails.
 - Traversal and symlink escape writes fail.
+- Current M2 baseline coverage: `go test ./internal/config ./internal/safety` validates typed Nexdev defaults/profile/auth-auto/remote-bind/unknown-top-level-key behavior and path traversal, absolute escape, `.git`, symlink escape, and basic deny-glob rejection.
+- Current M2 security baseline coverage: `go test ./internal/safety` validates secret redaction, `.env` assignment scrubbing, bearer token scrubbing, private key scrubbing, prompt-injection warning detection, default deny for shell/network, write deny globs, and wildcard shell rejection outside `dev`.
+- Remaining config/path/security coverage: full global/project/env/flag precedence wiring, unsafe CORS/profile combinations, app-level logger wiring, redaction integration for events/prompts/API, prompt-injection `security_warning` events, tool policy file loading, executor/verify enforcement, command output caps, controlled env, file locks, task expected-file enforcement, MCP poisoning fixtures, and audit logs after owning integrations exist.
 
 ### State
 
@@ -324,6 +358,15 @@ Fixture rules:
 - Admin can cancel/config/task-mutate/token-manage.
 - JSON errors use `ErrorResponse`.
 - Remote bind without auth fails.
+
+### Observability
+
+- Logger construction supports JSON and text modes.
+- Level filtering suppresses lower-severity records.
+- Log messages and string attributes are redacted through `internal/safety.RedactSecrets` before write.
+- Field helpers emit the canonical `SPEC.md` section 17 keys.
+- Current M2 coverage: `go test ./internal/observability` validates redaction for messages, attrs, grouped/with attrs, level filtering, JSON/text construction, level parsing, and required field helper keys.
+- Remaining M14 coverage: OTel disabled-by-default wiring after config integration, request/event correlation, provider usage/cost records, audit logs, and cross-boundary no-secret-leak integration tests for logs/events/artifacts/prompts/API.
 
 ### MCP
 

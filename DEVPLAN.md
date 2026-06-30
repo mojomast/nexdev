@@ -519,6 +519,18 @@ Spec obligations:
 
 ### 5.3 Config and Paths
 
+Status: M2-CONFIG-PATHS verified on 2026-06-30 for typed defaults, validation baseline, and spec-target path sanitizer. Full loader precedence and executor policy integration remain follow-up work.
+
+Evidence:
+- `internal/config/nexdev.go` defines Nexdev typed defaults for profile, project state dir, control-plane bind/port/auth, security command/network defaults, tool policy path, repo-analyze excludes, and provider primary/stage placeholders while preserving imported geoffrussy config behavior.
+- `internal/safety/paths.go` provides the M2 path sanitizer baseline for cleaned project-root writes, traversal/absolute escape rejection, `.git` denial, symlink escape rejection where filesystem state allows, and basic deny glob checks.
+- `go test ./internal/config ./internal/safety` passed.
+
+Next action guidance:
+- CLI/app wiring should adopt `config.LoadNexdevYAML`, preserve imported geoffrussy compatibility until retired by an orchestrated task, and add global/project/env/flag precedence tests when loader wiring exists.
+- Auth/security follow-up should extend validation for unsafe CORS/profile combinations and keep non-loopback auth behavior aligned with `controlplane.RequireAuthForBind` at app startup.
+- Executor/tool-policy follow-up should add file lock and task expected-file checks on top of `internal/safety.PathSanitizer`.
+
 Owner subagent role:
 - Config/Safety Worker for config and path contracts.
 
@@ -1123,6 +1135,20 @@ Spec obligations:
 
 ### 5.16 Observability / Logging / Cost
 
+Status: M2 logging baseline verified by Observability Worker on 2026-06-30. Full OpenTelemetry, runtime instrumentation, audit logs, and cost ledger remain M14 work.
+
+Evidence:
+- `internal/observability/logger.go` provides standard `log/slog` construction with caller-selected level and JSON/text modes.
+- A redacting handler applies `internal/safety.RedactSecrets` to messages, string attrs, grouped attrs, and attrs attached through `Logger.With` before the underlying handler writes.
+- Canonical helper attrs exist for `project_id`, `run_id`, `stage`, `task_id`, `provider`, `model`, `event_id`, and `request_id`.
+- OpenTelemetry is intentionally disabled in M2 through a documented false placeholder; no OTel SDK/exporter, runtime instrumentation, metrics, audit logging, or cost ledger behavior was added.
+- Evidence command: `go test ./internal/observability` passed.
+
+Next action guidance:
+- App/CLI wiring should construct loggers through `internal/observability.NewLogger` once config flag plumbing owns process startup.
+- M10/M14 workers should add request/event correlation fields at control-plane/event boundaries without duplicating field-name constants.
+- M14 should implement OTel, metrics, audit logs, and cost ledger only after M3 state and M4 provider usage metadata are available, keeping OTel disabled by default and adding no-secret-leak integration coverage.
+
 Owner subagent role:
 - Observability Worker.
 
@@ -1357,10 +1383,21 @@ First-wave contract tasks:
 | C9 | Define shared test fixtures | `internal/testutil/*`, `testdata/*` | Test Infrastructure Worker | C2-C5 | Fakes support deterministic IDs/time/provider/events | Fixture tests | `TESTING_STRATEGY.md` | None |
 
 First-wave progress:
+- M1-C1/C2/C4: verified by Contract/API Worker on 2026-06-29. Added `api/openapi.yaml` with all required `SPEC.md` section 12.2 routes, common first-wave schemas, and `x-nexdev-role` metadata; added inert event, artifact, changed-file, run-summary, structured model output, detour, and verification contracts in `internal/contract`. Evidence: `go test ./internal/contract` passed; `go test ./...` passed.
+- M1-C1/C2/C4 next-action guidance: Keep `api/openapi.yaml` authoritative until generated code is introduced. Generated OpenAPI types remain deferred to M1 integration/spec-management or the owning API worker after the codegen path is settled; downstream workers should not hand-roll divergent route or schema contracts.
 - M1-C3: verified by Pipeline Framework Worker on 2026-06-29. Added `internal/pipeline` contracts for canonical stage names/order, detour pseudo-stage, stage statuses, allowed status transitions, prerequisite requirement keys/snapshot validation, and minimal import-cycle-safe `PipelineStage`/`StageEnv` interfaces. Evidence: `go test ./internal/pipeline` passed; `go test ./...` passed.
 - M1-C3 next-action guidance: State, provider, executor, detour, and control-plane workers should import `internal/pipeline` stage/status identifiers rather than duplicating string constants. M5 may extend the same package with durable runner/resumption after M3 state and M4 provider contracts are available.
+- M1-C5: verified by State Worker on 2026-06-30. Added Nexdev state migration skeleton as additive migration version `4` in the imported geoffrussy migration runner, covering `runs`, `stage_runs`, `events`, `artifacts`, `hivemind_results`, `validate_results`, `steering_events`, `detour_records`, `navigation_events`, `plan_edit_events`, and `auth_tokens`. Added state tests for required table/index existence, seeded geoffrussy-compatible migration, event sequence uniqueness, and busy timeout. Evidence: `go test ./internal/state` passed; `go test ./...` passed.
+- M1-C5 next-action guidance: M3 State Workers should keep version `4` as the contract baseline, add repositories without replacing the migration runner unless orchestrated, and implement event sequence allocation/concurrency tests before SSE/control-plane work depends on the event log. `auth_tokens` is schema-only until the M3/M10 auth repository and middleware tasks.
 - M1-C6: verified by Provider Worker on 2026-06-30. Added Nexdev provider slot constants and `internal/provider.Router` contract for resolving stage slots to provider/model selections while preserving the imported geoffrussy `Provider` interface and registry. Empty slot selections inherit primary; unknown slots/providers are rejected. Evidence: `go test ./internal/provider` passed; `go test ./...` passed.
-- M1-C6 next-action guidance: M4 Provider Worker should build structured-output and fake-provider behavior on top of `Router.Resolve` instead of changing the imported `Provider` interface first. If SPEC section 11's context-aware `Provider` interface remains desired, treat the geoffrussy interface mismatch as a clarification/refactor decision for M4 or spec-management, not an M1 blocker.
+- M1-C6 next-action guidance: M4 Provider Worker should build structured-output and fake-provider behavior on top of `Router.Resolve` instead of changing the imported `Provider` interface first. Provider Worker C6 reported `clarification-needed` because the imported geoffrussy `Provider` interface differs materially from `SPEC.md` section 11.1. Keep that mismatch visible for M1 spec-management/M4 provider design; do not hide it by treating imported behavior as a replacement for the spec.
+
+- M1-C7: verified by Executor/Detour Worker on 2026-06-30. Added compile-safe executor control/report/update-event contracts in `internal/executor/contracts.go`, steering source/message/context contracts in `internal/steering/contracts.go`, and detour request/context/generator/splice/depth contracts in `internal/detour/contracts.go`. Evidence: `go test ./internal/executor ./internal/detour ./internal/steering` passed; `go test ./...` passed.
+- M1-C7 next-action guidance: M8 should implement executor controls and the event bridge against `TaskUpdateEventMapping` without changing event names. M8 steering work should persist `steering.Message` through M3 state repositories and preserve `SafetyPolicyOverrideAllowed=false`. M9 should implement detour generation/splicing behind `detour.Generator`, `detour.Splicer`, and `detour.DepthPolicy`, using `contract.TaskSpec` and blocker reason `detour_depth_exceeded` for depth exhaustion.
+- M1-C8: verified by Auth/Security Worker on 2026-06-30. Added compile-safe auth role constants, role hierarchy checks, route role metadata mirroring OpenAPI `x-nexdev-role`, MCP `per-tool` delegation, token record contract shape, and remote-bind auth requirement helper in `internal/controlplane/auth.go`. Evidence: `go test ./internal/controlplane` passed; `go test ./...` passed.
+- M1-C8 next-action guidance: M10 should wire HTTP middleware and startup/config auth enforcement through `RouteRoles`, `AllowsRoute`, and `RequireAuthForBind` rather than duplicating route role strings. M11 should resolve MCP tool-specific roles before calling `AllowsRoute` for `POST /mcp/call`; tool descriptions must not expand permissions. M3/M10 auth repository work should implement opaque token hashing, expiry, revocation, last-used updates, and constant-time comparisons against the existing `auth_tokens` schema without changing this contract unless orchestrated.
+- M1-C9: verified by Test Infrastructure Worker on 2026-06-30. Added `internal/testutil` black-box fixture contracts for deterministic UTC time, stable fixture IDs, minimal temp projects with safe defaults, event recording/sequence assertions over `internal/contract.EventEnvelope`, and auth role fixtures using `internal/controlplane` role constants without token storage behavior. Evidence: `go test ./internal/testutil` passed; `go test ./...` passed.
+- M1-C9 next-action guidance: M16/fake-provider workers should extend `internal/testutil` rather than creating duplicate ID/time/temp-project fixtures. Add fake provider, fake worker, SSE client/replay helpers, golden-path helpers, and security fixture repos only when their owning feature tests exist; keep provider/worker behavior deterministic and test-only. If docs-contract coverage for test fixtures is desired, assign a contracts/docs follow-up rather than editing `docs/contracts.md` ad hoc.
 
 ## 7. Milestone DAG
 
@@ -1385,10 +1422,10 @@ Evidence:
 - Baseline commands: `go test ./...` passed; `go vet ./...` passed.
 - Upstream compatibility note: temporary geoffrussy assessment failed `go test ./...` before import due a missing `internal/design.extractJSONFromMarkdown` helper referenced by tests; M0 added the helper after import without removing tests.
 
-Next action guidance:
-- Start M1 contract freeze with Contract/API Worker, State Worker, Pipeline Framework Worker, Provider Worker, Executor/Detour Worker, and Test Infrastructure Worker only after orchestrator verifies the M0 diff and preserved docs.
-- Prioritize `api/openapi.yaml`, event envelope/constants, stage/status contracts, state migration skeleton, provider/router contracts, and shared test fixtures before any feature-stage work.
-- Run spec-management review for M0 only if the orchestrator wants the spec to record the imported upstream command compatibility state; no spec deviation was introduced because geoffrussy was imported.
+Historical next action guidance:
+- Completed: M1 contract freeze started only after M0 verification and preserved-doc checks.
+- Completed: first-wave work prioritized `api/openapi.yaml`, event envelope/constants, stage/status contracts, state migration skeleton, provider/router contracts, auth route metadata, executor/steering/detour interfaces, and shared test fixtures before feature-stage work.
+- Still relevant: run M1 spec-management before broad M2-M5 implementation to classify the Provider C6 interface mismatch and the generated OpenAPI codegen deferral.
 
 Purpose:
 - Convert the planning-only repo into a buildable Go project, preferably by forking/importing geoffrussy while preserving the canonical spec and planning docs.
@@ -1434,7 +1471,7 @@ Acceptance criteria:
 
 ### M1. Contract Freeze: Schemas, Interfaces, Event Envelopes, Ownership Rules
 
-Status: in_progress. C1/C2/C4 first-wave contracts implemented by Contract/API Worker on 2026-06-29; C3 and C6 are verified by their owning workers; remaining M1 contracts are still pending other owners.
+Status: first-wave verified. C1-C9 contract workers completed blocker-free and the orchestrator verification passed `go test ./...`, `go vet ./...`, and `go mod verify`. M1 remains open only for integration/spec-management reconciliation, the generated OpenAPI codegen decision, and the Provider C6 `clarification-needed` follow-up for the imported geoffrussy `Provider` interface mismatch with `SPEC.md` section 11.1.
 
 Evidence for C1/C2/C4:
 - `api/openapi.yaml` exists with all required `SPEC.md` section 12.2 routes, common first-wave schemas, and `x-nexdev-role` operation metadata.
@@ -1442,11 +1479,29 @@ Evidence for C1/C2/C4:
 - `internal/contract/artifacts.go` and `internal/contract/model_outputs.go` define inert artifact, changed-file, run-summary, structured model output, detour, and verification structs.
 - `internal/contract/openapi_test.go` and `internal/contract/events_test.go` validate route/role coverage, common schema presence, event constants, and event sources.
 
+Evidence for C7:
+- `internal/executor/contracts.go` defines context-aware executor control interfaces, current-task snapshots, task report shape, task status constants, and `TaskUpdate` to Nexdev task event mapping.
+- `internal/steering/contracts.go` defines steering source/message/context/store contracts and pins safety override prohibition.
+- `internal/detour/contracts.go` defines shared detour request/result aliases, request context, generator/splicer/depth interfaces, and default depth contract.
+- `internal/executor/contracts_test.go`, `internal/steering/contracts_test.go`, and `internal/detour/contracts_test.go` validate interface compilation and mapping coherence.
+
+Evidence for C3/C5/C6/C8/C9:
+- `internal/pipeline` owns canonical stage/status/prerequisite contracts; `go test ./internal/pipeline` passed.
+- `internal/state` migration version `4` adds the Nexdev contract tables and indexes while preserving the imported geoffrussy migration runner; `go test ./internal/state` passed.
+- `internal/provider.Router` resolves stage provider slots, validates registry names, and inherits primary provider/model selections; `go test ./internal/provider` passed. The imported provider interface mismatch remains a spec-management/M4 risk.
+- `internal/controlplane/auth.go` defines role hierarchy, route metadata, token record shape, MCP `per-tool` delegation, and non-loopback auth helper; `go test ./internal/controlplane` passed.
+- `internal/testutil` defines black-box fixture contracts for temp projects, deterministic time/IDs, event recording, and auth role fixtures; `go test ./internal/testutil` passed.
+
 Next action guidance:
-- State Worker may use `internal/contract.EventEnvelope`, artifact structs, and event constants while defining migrations and repositories, but must not assume HTTP handler behavior exists.
-- Pipeline Framework Worker still owns C3 stage/task/status contracts and should avoid editing `api/openapi.yaml` or the Contract/API-owned structs without orchestration.
-- Control Plane Worker should wait for M1 integration review and codegen-location decision before binding handlers to `api/openapi.yaml`.
+- Run M1 spec-management before starting broad M2-M5 implementation. It should classify the C6 provider interface mismatch, confirm that generated OpenAPI codegen remains deferred or assign the codegen worker, and record any accepted clarifications without weakening `SPEC.md`.
+- M3 State Workers should build repositories on the version `4` migration skeleton, preserve geoffrussy compatibility, and complete event sequence allocation/concurrency before M10 SSE/control-plane work begins.
+- M4 Provider Worker should keep using `Router.Resolve` for provider slot selection while spec-management decides whether to refactor toward the `SPEC.md` section 11.1 interface, document a compatibility wrapper, or approve a contract correction.
+- M5 Pipeline workers should import `internal/pipeline` stage/status identifiers and avoid duplicating string constants.
+- M8/M9 workers should implement executor, steering, and detour behavior behind the C7 interfaces without changing event names or safety override rules.
+- M10 Control Plane Worker should wait for M1 integration/spec-management and the codegen-location decision before binding handlers to `api/openapi.yaml`.
 - Generated OpenAPI types remain deferred until the codegen tool path is settled; dependent workers should treat `api/openapi.yaml` as the machine contract.
+- M10 control-plane/auth workers should import `internal/controlplane` auth helpers and keep `POST /mcp/call` role resolution delegated to M11 per-tool metadata.
+- M16 fake-provider/E2E work should extend `internal/testutil`; no fake-provider E2E script exists yet.
 
 Purpose:
 - Create stable contracts that unblock parallel workers.
@@ -1504,6 +1559,37 @@ Acceptance criteria:
 - No open contract blocker remains for M2-M5.
 
 ### M2. Config, Paths, Logging, Security Baseline
+
+Status: in_progress. M2-CONFIG-PATHS, M2-SECURITY-BASELINE, and M2-OBSERVABILITY-LOGGER are verified for config/path/security/logging helper baselines; project lock integration remains pending M2 work.
+
+Evidence for M2-CONFIG-PATHS:
+- `internal/config/nexdev.go` and tests implement typed defaults, profile validation, `auth_required: auto` resolution, remote bind rejection when auth is explicitly disabled, and unknown top-level key rejection with `experimental.allow_unknown_config` override.
+- `internal/safety/paths.go` and tests implement path traversal, absolute outside-root, `.git`, symlink escape, and deny-glob rejection.
+- Documentation updates are recorded in `docs/architecture.md`, `docs/contracts.md`, and `TESTING_STRATEGY.md`.
+- Verification command: `go test ./internal/config ./internal/safety` passed.
+
+Evidence for M2-SECURITY-BASELINE:
+- `internal/safety/redaction.go` implements deterministic best-effort redaction for provider/API key shapes, bearer tokens, password/token assignments, private key blocks, SSH keys, and `.env` style secret assignments.
+- `internal/safety/prompt_injection.go` implements warning-only prompt-injection findings for common instruction override, prompt exfiltration, role override, safety bypass, and secret exfiltration strings.
+- `internal/safety/policy.go` implements a non-executing tool policy skeleton with default-deny shell/network, read/write basics, deny globs for `.git`, `.env`, private keys, PEM/key files, and wildcard shell allow-rule rejection in `trusted-lan` and `ci` profiles.
+- Documentation updates are recorded in `docs/architecture.md`, `docs/contracts.md`, and `TESTING_STRATEGY.md`.
+- Verification command: `go test ./internal/safety` passed; `go test ./...` passed.
+
+Evidence for M2-OBSERVABILITY-LOGGER:
+- `internal/observability/logger.go` implements the spec-target slog baseline with level selection, JSON/text modes, and a redacting handler that applies `internal/safety.RedactSecrets` to messages and string attributes before write.
+- Required log field helpers exist for `project_id`, `run_id`, `stage`, `task_id`, `provider`, `model`, `event_id`, and `request_id`.
+- OpenTelemetry, metrics, audit logs, runtime instrumentation, and cost ledger behavior remain unimplemented and deferred to M14.
+- Documentation updates are recorded in `docs/architecture.md`, `docs/contracts.md`, and `TESTING_STRATEGY.md`.
+- Verification command: `go test ./internal/observability` passed; `go test ./...` passed.
+
+Next action guidance:
+- Finish remaining M2 project lock path helper if still separate before control-plane/executor integration depends on project-local runtime behavior.
+- M8/M15 executor/verify/security workers must wire `ToolPolicy` into command and network-capable tool paths before any execution exists, load `.nexdev/tool_policy.yaml` only through an owned policy-loader task, and keep wildcard shell allow rules invalid outside `dev`.
+- M6/M7/M10/M14 workers should route untrusted repo/tool text through `DetectPromptInjection` and emit/surface `security_warning` findings where their domains own events or review output.
+- M10/M14 observability/control-plane/provider workers should construct loggers through `internal/observability`, attach canonical request/event/provider/stage/task fields, apply `RedactSecrets` at event/artifact/prompt/API boundaries, and add integration tests for no secret leakage.
+- M14 should add OTel, metrics, audit logs, and cost ledger behavior only after M3 state and M4 provider usage metadata are available; OTel must remain disabled by default.
+- Defer full config precedence wiring to CLI/app integration unless the orchestrator assigns a config-loader task with ownership of root command/app wiring.
+- Keep `SPEC.md` unchanged; `auth_required: auto` behavior is documented as implementation detail pending spec-management review.
 
 Purpose:
 - Establish safe runtime defaults and common security/logging foundations.
@@ -1600,6 +1686,11 @@ Merge/integration checkpoint:
 Acceptance criteria:
 - SQLite is authoritative for run, event, task/blocker, steering, detour, auth, and artifact state contracts.
 - Event log supports persisted-before-broadcast semantics.
+
+M1-C5 baseline for M3:
+- Migration version `4` already creates the required Nexdev contract tables and indexes additively on top of imported geoffrussy state.
+- `Store.open` enables foreign keys, WAL, and `busy_timeout`; retry helpers remain imported geoffrussy behavior.
+- M3 should add typed repositories, event sequence allocation, concurrency/contention coverage, and auth/steering/detour/plan-edit persistence without changing table names unless spec-management approves a contract update.
 
 ### M4. Provider Registry and Fake Provider Harness
 
@@ -2566,26 +2657,27 @@ Documentation acceptance per milestone:
 
 ## 14. Spec Coverage Matrix
 
-The next session must expand this matrix as implementation proceeds. Initial status is `planned` for all rows because implementation has not started.
+This matrix is updated as implementation proceeds. M0 and M1 first-wave evidence is reflected below; later feature behavior remains planned or in progress as noted.
 
 | Requirement ID | Spec Area | Requirement Summary | Milestone | Owner | Implementation Path | Test Coverage | Docs | Status | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | PROD-001 | Product | Local-first Go single-binary coding harness | M0-M19 | Foundation | `cmd/nexdev`, imported geoffrussy CLI base | `go test ./...`, `go vet ./...`; CLI/E2E later | README, architecture | in_progress | M0 created buildable binary path; product behavior still contract/feature work |
 | BASE-001 | Source synthesis | Fork/import geoffrussy and preserve provider/state/navigation/executor/git | M0 | Foundation | repo-wide imported source | `go test ./...`, `go vet ./...` | architecture | verified | Imported geoffrussy at `e29f8e7649584585a93d8fc8ac9123036fcaf38e`; planning docs preserved |
 | STAGE-001 | Stage graph | Implement canonical stage graph and prerequisites | M1/M5 | Pipeline | `internal/pipeline` | `go test ./internal/pipeline`; runner tests later | architecture; contracts follow-up | in_progress | M1-C3 verified contract constants, status transitions, prerequisite snapshot rules, and import-cycle-safe interfaces; durable runner/resumption remains M5 |
-| STATE-001 | SQLite | Durable SQLite state with WAL/FK/busy timeout | M3 | State | `internal/state` | migration tests | contracts | planned | Source of truth |
-| EVENT-001 | SSE/events | Persisted event log, monotonic per run | M3/M10 | State/Control | `internal/state`, `internal/controlplane` | event/SSE tests | contracts/API | planned | Persist before broadcast |
+| STATE-001 | SQLite | Durable SQLite state with WAL/FK/busy timeout | M3 | State | `internal/state` | `go test ./internal/state`; repository/concurrency tests later | contracts | in_progress | M1-C5 migration skeleton verified; repositories and full M3 behavior pending |
+| EVENT-001 | SSE/events | Persisted event log, monotonic per run | M3/M10 | State/Control | `internal/state`, `internal/controlplane` | event/SSE tests | contracts/API | in_progress | Events table and uniqueness exist; allocation/replay repositories pending |
 | API-001 | Control plane | Required HTTP routes from OpenAPI | M1/M10 | Control | `api/openapi.yaml`, `internal/controlplane` | `go test ./internal/contract`; handler tests later | contracts/API | in_progress | OpenAPI skeleton and role metadata exist; handlers/codegen pending |
-| AUTH-001 | Auth | Opaque bearer tokens with roles/expiry/revocation | M3/M10 | Auth | state + controlplane | auth matrix | security/contracts | planned | No homegrown JWT default |
+| AUTH-001 | Auth | Opaque bearer tokens with roles/expiry/revocation | M3/M10 | Auth | `internal/controlplane/auth.go`; state + controlplane later | `go test ./internal/controlplane`; full auth matrix later | security/contracts | in_progress | M1-C8 role hierarchy, route metadata, token record skeleton, MCP per-tool delegation, and remote-bind helper verified; token repository/hash/middleware behavior pending |
 | MCP-001 | MCP | MCP tools as thin wrappers over control plane | M11 | MCP | `internal/controlplane/mcp.go` | MCP tests | contracts/API | planned | Same role checks |
 | PROVIDER-001 | Provider | Preserve registry and route by stage | M1/M4 | Provider | `internal/provider/router.go`; imported provider registry | `go test ./internal/provider`; structured/fake tests later | architecture; contracts | in_progress | M1-C6 verified slot routing and primary inheritance; structured wrapper/fake provider remain M4 |
 | STRUCT-001 | Structured outputs | Strict decode, semantic validate, repair/reject | M4/M6 | Provider/Pipeline | `internal/contract/model_outputs.go`; provider + pipeline later | `go test ./internal/contract`; schema repair tests later | contracts | in_progress | First-wave inert structs exist; validation/repair behavior pending |
-| SECURITY-001 | Tool/path safety | Deny shell by default, path/symlink policy | M2/M15 | Security | `internal/safety` | security fixtures | security | planned | Core non-negotiable |
-| STEER-001 | Steering | Durable steering events influence prompt context only | M8 | Executor | `internal/steering` | steering tests | contracts | planned | Cannot override safety |
-| DETOUR-001 | Detour | Blocker/manual detour creates minimal spliced tasks | M9 | Detour | `internal/detour` | detour tests | architecture/contracts | planned | Depth max 3 |
+| SECURITY-001 | Tool/path safety | Deny shell by default, path/symlink policy | M2/M15 | Security | `internal/config`, `internal/safety` | `go test ./internal/config ./internal/safety`, `go test ./internal/safety`; security fixtures later | architecture; contracts; testing | in_progress | M2 config/path and security helper baselines verified; shell/network execution is not implemented; policy loading/enforcement integration, non-logging redaction boundaries, prompt-warning events, file locks, expected-file checks, and M15 fixtures remain follow-up |
+| OBS-001 | Observability | Structured slog baseline with redaction and canonical fields | M2/M14 | Observability | `internal/observability` | `go test ./internal/observability`; integration/no-leak/OTel/cost tests later | architecture; contracts; testing | in_progress | M2 logging baseline verified with JSON/text construction, level filtering, redacted messages/attrs, and field helpers; OTel, metrics, audit logs, runtime instrumentation, and cost ledger remain M14 |
+| STEER-001 | Steering | Durable steering events influence prompt context only | M8 | Executor | `internal/steering/contracts.go` | `go test ./internal/steering`; persistence/prompt tests later | contracts | in_progress | M1-C7 source/message/context contracts exist; durable state and prompt integration remain M8 |
+| DETOUR-001 | Detour | Blocker/manual detour creates minimal spliced tasks | M9 | Detour | `internal/detour/contracts.go` | `go test ./internal/detour`; splice/generation tests later | architecture/contracts | in_progress | M1-C7 interfaces and depth contract exist; provider generation and durable splicing remain M9 |
 | VERIFY-001 | Verify | Policy-gated verification commands with repair loop | M7/M16 | Pipeline | `internal/pipeline/verify.go` | verify tests/E2E | testing | planned | Command caps/timeouts |
 | HANDOFF-001 | Handoff | Write handoff, changed files, run summary | M7/M16 | Pipeline/Git | artifacts + git | golden/E2E | README/operating | planned | Anchored artifacts |
-| TEST-001 | Testing | Fake-provider full pipeline and security tests | M16/M19 | Test Infra | scripts/tests | all gates | testing | planned | Required for done |
+| TEST-001 | Testing | Fake-provider full pipeline and security tests | M16/M19 | Test Infra | `internal/testutil`; scripts/tests later | `go test ./internal/testutil`; all gates later | testing | in_progress | M1-C9 verified shared fixture contracts for deterministic IDs/time/events/temp projects/auth roles; fake provider, fake worker, E2E, and security fixtures remain M16/M19 |
 | DOC-001 | Docs | Docs and spec updated continuously | M0-M19 | Docs/Spec | docs | review | all docs | in_progress | M0 updated bootstrap status and architecture base strategy; continue next-action updates with each docs change |
 
 ## 15. Risk Register

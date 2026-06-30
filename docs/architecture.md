@@ -156,6 +156,14 @@ Structured output flow:
 
 ## 9. Safety Flow
 
+Current M2 config/path baseline:
+- `internal/config` now exposes Nexdev-specific typed defaults and validation alongside the imported geoffrussy config manager for compatibility.
+- New Nexdev defaults use project-local `.nexdev` state, loopback control-plane bind `127.0.0.1:7432`, `auth_required: auto`, denied command/network defaults, `.nexdev/tool_policy.yaml`, repo-analyze excludes, and provider stage placeholders.
+- `internal/safety` now owns the spec-target path sanitizer baseline for new Nexdev code. The imported `internal/security` sanitizer remains unchanged for geoffrussy compatibility.
+- `internal/safety.RedactSecrets` provides deterministic best-effort scrubbing for provider/API key shapes, bearer tokens, password/token assignments, private key blocks, SSH keys, and `.env` style secret assignments before text reaches logs, events, artifacts, prompts, or API responses.
+- `internal/safety.DetectPromptInjection` scans untrusted repo/tool text for common instruction override, prompt exfiltration, role override, safety bypass, and secret exfiltration strings and returns warning findings only. It does not change policy decisions by itself.
+- `internal/safety.DefaultToolPolicy` is a non-executing policy skeleton: read/write basics are allowed, shell and network are denied by default, writes deny `.git`, `.env`, private-key, PEM, and key-looking paths, and wildcard shell allow rules are invalid in `trusted-lan` and `ci` profiles.
+
 Before a task modifies files:
 1. Clean path.
 2. Resolve against project root.
@@ -167,8 +175,23 @@ Before a task modifies files:
 8. Record hashes where feasible.
 
 Shell/network tools are denied by default and require explicit policy allowance.
+Command execution and network tool implementations do not exist in this M2 baseline; later executor/verify work must call the policy evaluator before running any command or network-capable tool.
 
-## 10. Control Plane Flow
+## 10. Observability Flow
+
+Current M2 logging baseline:
+- `internal/observability` now owns the spec-target structured logging baseline for new Nexdev code. The imported `internal/logging` package remains unchanged for geoffrussy compatibility.
+- `observability.NewLogger` constructs standard `log/slog` loggers with configurable level and JSON or text handlers.
+- A redacting handler wraps the underlying slog handler and applies `internal/safety.RedactSecrets` to log messages, string attributes, grouped string attributes, and attributes attached through `Logger.With` before write.
+- Field helper attributes use the canonical names from `SPEC.md` section 17: `project_id`, `run_id`, `stage`, `task_id`, `provider`, `model`, `event_id`, and `request_id`.
+- OpenTelemetry, runtime instrumentation, metrics, audit logs, and the cost ledger are not implemented in M2. `observability.OpenTelemetryEnabled` is a documented false placeholder until M14 owns OTel/cost/audit integration.
+
+M14 follow-ups:
+- Wire request IDs, event IDs, provider usage, stage/task timings, and control-plane/executor/provider instrumentation through the logger and event/state layers.
+- Add OTel setup only behind explicit config and keep it disabled by default.
+- Add persistent cost/audit behavior only after state/provider usage contracts exist.
+
+## 11. Control Plane Flow
 
 HTTP and MCP calls are adapters over the same services used by local CLI/TUI.
 
@@ -180,7 +203,7 @@ Rules:
 - Non-loopback bind without auth fails startup.
 - JSON errors use `ErrorResponse`.
 
-## 11. Development Parallelism
+## 12. Development Parallelism
 
 Implementation parallelism is achieved by package ownership, not by shared-file contention.
 

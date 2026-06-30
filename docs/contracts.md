@@ -1,6 +1,6 @@
 # Nexdev Contracts Plan
 
-**Status:** M1 first-wave OpenAPI, event, artifact, and model-output contracts exist.  
+**Status:** M1 first-wave OpenAPI, event, stage/status, state migration, artifact, model-output, provider router, executor, steering, detour, auth role, and test-fixture contracts exist.  
 **Canonical source:** `SPEC.md`.  
 **Rule:** Once created, `api/openapi.yaml`, migrations, generated API types, and schema files are contract artifacts and must stay synchronized with this document.
 
@@ -158,6 +158,10 @@ Rules:
 
 ## 4. State Contract
 
+Authoritative migration location:
+- `internal/state/migrations.go`
+- Status: M1-C5 additive skeleton exists as migration version `4` using the imported geoffrussy migration runner. No full Nexdev repositories are implemented yet.
+
 Required SQLite behavior:
 - Foreign keys on.
 - WAL enabled.
@@ -184,12 +188,33 @@ Required event indexes:
 - Index by `(run_id, sequence)`.
 - Index by `(run_id, type)`.
 
+Additional M1 skeleton indexes:
+- `idx_runs_project_id`
+- `idx_stage_runs_run_stage`
+- `idx_artifacts_project_kind`
+- `idx_artifacts_run_kind`
+- `idx_hivemind_results_run_voice`
+- `idx_validate_results_run_id`
+- `idx_steering_events_run_task`
+- `idx_detour_records_run_trigger`
+- `idx_navigation_events_project_created`
+- `idx_plan_edit_events_run_created`
+
 Migration policy:
 - Preserve existing geoffrussy tables where possible.
 - Additive migrations by default.
 - Destructive migration requires explicit spec-management approval.
 
+Current compatibility evidence:
+- The migration runner remains the imported custom runner; goose/sqlc are not adopted in M1.
+- Existing geoffrussy tables are preserved and Nexdev tables are added in migration version `4`.
+- `Store.open` enables foreign keys and WAL and now configures `PRAGMA busy_timeout = 5000` before migrations run.
+
 ## 5. Stage Contract
+
+Authoritative Go constants and interfaces:
+- `internal/pipeline`
+- Status: M1-C3 owns the canonical stage names, stage order, detour pseudo-stage, status constants, transition checks, prerequisite snapshot validation, and minimal `PipelineStage`/`StageEnv` interfaces. Durable runner/resumption remains M5 work.
 
 Canonical stage order:
 
@@ -259,6 +284,7 @@ Provider boundary:
 - No stage calls concrete providers directly.
 - Current M1 router contract is implemented in `internal/provider/router.go`.
 - The imported geoffrussy `Provider` interface and registry remain the concrete provider boundary for M1.
+- Risk: Provider Worker C6 reported `clarification-needed` because the imported geoffrussy `Provider` interface differs materially from `SPEC.md` section 11.1. M1 does not resolve that mismatch; spec-management/M4 must decide whether to add a wrapper/refactor or approve a contract correction.
 
 Provider slots:
 - `interview`
@@ -292,10 +318,46 @@ Current deferrals:
 - Usage/cost metadata integration remains M4/M14 follow-up.
 - Deterministic fake provider scripting remains M4 follow-up.
 
-## 8. Config Contract
+## 8. Executor, Steering, and Detour Contracts
+
+Executor contracts:
+- `internal/executor/contracts.go` defines the M1 control boundary only.
+- Required controls are `CurrentTask`, `Pause`, `Resume`, `Cancel`, `SkipTask`, and `SetSteeringContext` with `context.Context` where mutations can block or be cancelled.
+- `TaskUpdateEventMapping` maps imported geoffrussy `TaskUpdate` values to Nexdev task event types with source `executor` and stage `develop`.
+- `TaskReport` is an inert report shape for later M8 state/artifact integration; no execution behavior is implemented by M1-C7.
+
+Steering contracts:
+- `internal/steering/contracts.go` defines durable steering `Message`, selected prompt `Context`, source constants, and a minimal store interface.
+- Accepted steering sources are `cli`, `api`, `tui`, and `mcp`.
+- `SafetyPolicyOverrideAllowed` is false. Steering can add operator context but cannot override safety policy, output schema, or task acceptance criteria unless a later admin plan mutation changes the task contract.
+
+Detour contracts:
+- `internal/detour/contracts.go` aliases shared `internal/contract.DetourRequest` and `DetourResult` and uses `contract.TaskSpec` for new tasks.
+- `RequestContext` captures current task, neighboring tasks, blocker, phase, design summary, repo context, and depth data for later M9 detour generation.
+- `Generator`, `Splicer`, and `DepthPolicy` are compile-safe interfaces only. Provider-backed detour generation and durable plan mutation remain unimplemented.
+- Default max depth is `3`; depth exhaustion must surface blocker reason `detour_depth_exceeded` and must not silently skip.
+
+Implemented M1-C7 tests:
+- `go test ./internal/executor` checks task update to event mapping and control interface compilation.
+- `go test ./internal/steering` checks source constants, safety override prohibition, and store interface compilation.
+- `go test ./internal/detour` checks shared detour types, splice/depth contracts, and existing imported detour behavior.
+
+## 9. Config Contract
+
+Authoritative M2 baseline:
+- `internal/config/nexdev.go`
+- Status: typed Nexdev defaults and validation exist beside the imported geoffrussy `Config` manager for compatibility. Full file/global/env/flag precedence wiring remains a later CLI/app integration task.
 
 Default config file:
 - `nexdev.yaml`
+
+Implemented defaults:
+- `profile: dev`.
+- `project.state_dir: .nexdev`.
+- `controlplane.enabled: true`, `bind: 127.0.0.1`, `port: 7432`, `auth_required: auto`, `token_env: NEXDEV_CONTROL_TOKEN`.
+- `security.command_execution_default: deny`, `network_default: deny`, `tool_policy_file: .nexdev/tool_policy.yaml`, `reject_symlink_escape: true`.
+- Repo analysis excludes `.git/**`, `node_modules/**`, `vendor/**`, `dist/**`, `build/**`, and `.nexdev/**`.
+- Provider primary defaults to the spec placeholder and every required stage slot has an empty placeholder that downstream provider routing can inherit from primary.
 
 Required precedence, lowest to highest:
 1. Built-in defaults.
@@ -309,18 +371,52 @@ Required precedence, lowest to highest:
 Config validation:
 - Reject unknown top-level keys unless `experimental.allow_unknown_config` is true.
 - Reject non-loopback bind without auth.
-- Reject unsafe CORS/profile combinations.
+- `auth_required: auto` resolves to false for loopback `dev`, true for non-loopback bind, `trusted-lan`, or `ci`.
+- Unsafe CORS/profile validation remains a follow-up for M2 auth/security wiring.
 - Shell command execution default is deny.
+- Network access default is deny.
+
+Path safety baseline:
+- `internal/safety/paths.go`
+- Cleans paths, resolves relative paths against the project root, rejects traversal and absolute paths outside root, rejects writes under `.git`, evaluates existing symlink ancestors for write paths, and supports basic deny globs such as `secrets/**` and `*.pem`.
+- File locks and task expected-file enforcement remain later executor/policy integration work.
+
+Security baseline contracts:
+- `internal/safety/redaction.go` exposes `RedactSecrets(text string) string`. It deterministically replaces known secret forms with `[REDACTED]`, including provider API key shapes, bearer tokens, password/token/key assignments, private key blocks, SSH keys, and `.env` style secret assignments.
+- `internal/safety/prompt_injection.go` exposes `DetectPromptInjection(text string) []PromptInjectionFinding`. Findings include a stable pattern name, message, and severity. Detection is warning-only; enforcement remains the caller's responsibility through events, review notes, or later pipeline policy.
+- `internal/safety/policy.go` exposes `DefaultToolPolicy`, `ToolPolicy.Validate(profile)`, `AllowsShellCommand`, `AllowsNetwork`, and `ValidateWritePath`. The default policy allows read/write basics, denies shell and network, denies writes to `.git`, `.env`, private key, PEM, and key-looking files, and rejects wildcard shell allow rules in `trusted-lan` and `ci` profiles.
+- No command execution or network tool implementation is provided by the M2 security baseline.
+
+Remaining M2/M15 security gaps:
+- Redaction is wired into the new `internal/observability` slog handler baseline, but app startup and provider/event/artifact/prompt/API boundaries do not yet route through it.
+- Prompt-injection findings are not yet emitted as `security_warning` events or surfaced by repo analysis/review stages.
+- Tool policy loading from `.nexdev/tool_policy.yaml`, executor/verify enforcement, output caps, controlled environments, file locks, task expected-file enforcement, MCP poisoning fixtures, and audit logs remain follow-up work.
 
 Open decision:
 - Define exact precedence between duplicate `develop.commit_on_*` and `git.commit_on_*` fields during config implementation.
 
-## 9. Auth Contract
+## 10. Auth Contract
+
+Authoritative skeleton:
+- `internal/controlplane/auth.go`
+- Status: M1-C8 role and route metadata helpers exist. No HTTP middleware, token repository, token generation, token hashing, or storage behavior is implemented by this skeleton.
 
 Roles:
+- `none` for unauthenticated routes such as `GET /health`.
 - `observer`
 - `operator`
 - `admin`
+- `per-tool` for `POST /mcp/call`, which delegates to the requested MCP tool's required role.
+
+Role hierarchy:
+- `admin` includes `operator`.
+- `operator` includes `observer`.
+- `observer` includes observer read routes only.
+- `none` routes are allowed without auth.
+
+Route role metadata:
+- `internal/controlplane.RouteRoles` mirrors `api/openapi.yaml` `x-nexdev-role` metadata for every required route in `SPEC.md` section 12.2.
+- `POST /mcp/call` is represented as `per-tool` and must not expand permissions; M11 resolves the requested tool role and passes it through the same role hierarchy.
 
 Default token model:
 - Opaque bearer tokens.
@@ -328,14 +424,19 @@ Default token model:
 - Store hash only.
 - Store role, name, created time, expiry, revocation, last-used time.
 - Constant-time compare.
+- `TokenRecord` mirrors the migration version `4` `auth_tokens` schema at the contract level only.
 
 Remote bind:
 - Startup fails if bind is not loopback and auth is disabled.
+- `RequireAuthForBind` provides the compile-safe contract helper for later config/startup integration.
 
 Optional stateless tokens:
 - Deferred unless explicitly required.
 
-## 10. MCP Contract
+Implemented M1-C8 tests:
+- `go test ./internal/controlplane` checks role hierarchy, required route coverage, mutating route role expectations, MCP per-tool delegation, and remote-bind auth requirement behavior.
+
+## 11. MCP Contract
 
 Required tools:
 - `nexdev_start_run`
@@ -358,7 +459,7 @@ Rules:
 - Same role checks as HTTP.
 - MCP stdio mode must not execute arbitrary shell strings.
 
-## 11. Artifact Contract
+## 12. Artifact Contract
 
 Required project-local artifacts:
 - `.nexdev/artifacts/interview.json`
@@ -392,7 +493,33 @@ Authoritative first-wave Go structs:
 - `internal/contract/artifacts.go`
 - Status: artifact kind constants, manifest/item structs, changed-file manifest, run summary, stage summary, and provider usage structs exist for downstream M1 workers.
 
-## 12. CLI Contract
+## 13. Observability Contract
+
+Authoritative M2 logging baseline:
+- `internal/observability/logger.go`
+- Status: structured logging construction and redaction wrapper exist. OTel, metrics, runtime instrumentation, audit logs, and cost ledger behavior remain M14 follow-up work.
+
+Logger behavior:
+- Uses standard `log/slog`.
+- Supports JSON and text handlers.
+- Supports caller-provided slog level or defaults to info.
+- Redacts messages and string attributes with `internal/safety.RedactSecrets` before write, including grouped attrs and attrs supplied through `Logger.With`.
+
+Required field names:
+- `project_id`
+- `run_id`
+- `stage`
+- `task_id`
+- `provider`
+- `model`
+- `event_id`
+- `request_id`
+
+Current deferrals:
+- OpenTelemetry is disabled/not implemented in M2; `observability.OpenTelemetryEnabled` is false as a documented placeholder.
+- Provider usage/cost persistence and audit logs require M3 state and M4 provider usage metadata before M14 implementation.
+
+## 14. CLI Contract
 
 Required commands are listed in `DEVPLAN.md` and `SPEC.md` section 18.
 
@@ -402,7 +529,7 @@ Rules:
 - `nexdev steer` maps to `POST /steer` semantics.
 - `nexdev init --import-devussy PATH` is required by migration plan.
 
-## 13. Contract Tests
+## 15. Contract Tests
 
 Required contract tests:
 - OpenAPI validation and generated code compile.
@@ -419,3 +546,21 @@ Required contract tests:
 
 Implemented first-wave tests:
 - `go test ./internal/contract` validates OpenAPI route/role coverage, required schema names, event contract version, event type constants, and event source constants.
+- `go test ./internal/executor ./internal/detour ./internal/steering` validates M1-C7 executor, detour, and steering interface contracts while preserving imported package behavior.
+- `go test ./internal/pipeline` validates stage/status/prerequisite contracts.
+- `go test ./internal/state` validates migration version `4`, required table/index presence, seeded geoffrussy-compatible migration, event sequence uniqueness, foreign-key enforcement, WAL, and busy timeout.
+- `go test ./internal/provider` validates router slot resolution, primary inheritance, and unknown slot/provider errors.
+- `go test ./internal/controlplane` validates auth role hierarchy, route metadata coverage, MCP per-tool delegation, and remote-bind auth requirement behavior.
+- `go test ./internal/testutil` validates M1 black-box fixture contracts for temp projects, deterministic time/IDs, event recording, and auth role fixtures.
+- `go test ./internal/observability` validates M2 logging construction, redaction, level filtering, JSON/text modes, and required field helper keys.
+
+## 16. Test Fixture Contract
+
+Authoritative test-only package:
+- `internal/testutil`
+- Status: M1-C9 provides black-box fixtures for deterministic UTC time, stable fixture IDs, minimal safe temp projects, event recording over `internal/contract.EventEnvelope`, and auth role fixtures from `internal/controlplane` role constants.
+
+Rules:
+- Production code must not import `internal/testutil`.
+- Fixture helpers should be extended only when an owning feature test needs them.
+- Fake provider, fake worker, SSE replay client, golden-path helpers, and security fixture repos remain deferred; no fake-provider E2E script exists yet.
