@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,6 +71,66 @@ func TestVerifyAndHandoffStagesWriteArtifacts(t *testing.T) {
 	handoffMD := string(readStageArtifact(t, root, handoffArtifactRelPath))
 	if !strings.Contains(handoffMD, "develop.txt") || strings.Contains(handoffMD, "sk-testsecret") {
 		t.Fatalf("handoff markdown missing changed file or leaked secret:\n%s", handoffMD)
+	}
+}
+
+func TestHandoffStageUsesGitDiffWhenBaseRefAvailable(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	ctx := context.Background()
+	root := t.TempDir()
+	store, env := seededDevelopEnv(t, ctx, root, "proj_handoff_git", "run_handoff_git")
+	runPipelineGit(t, root, "init")
+	runPipelineGit(t, root, "config", "user.email", "nexdev@example.invalid")
+	runPipelineGit(t, root, "config", "user.name", "Nexdev Test")
+	writePipelineFile(t, root, "develop.txt", "before")
+	runPipelineGit(t, root, "add", ".")
+	runPipelineGit(t, root, "commit", "-m", "base")
+	writePipelineFile(t, root, "develop.txt", "after")
+	writePipelineFile(t, root, "git-only.txt", "added")
+	runPipelineGit(t, root, "add", "git-only.txt")
+
+	if err := store.CreateCostRecord(ctx, &state.CostRecord{ID: "cost_handoff_git", ProjectID: env.Project.ProjectID(), RunID: env.Run.RunID(), Stage: "design", Provider: "fake", Model: "fake-model", TotalTokens: 1, Currency: "USD"}); err != nil {
+		t.Fatalf("CreateCostRecord failed: %v", err)
+	}
+	handoff := NewHandoffStage(HandoffStageConfig{ProjectRoot: root, GitBaseRef: "HEAD", Request: "git diff"})
+	if err := handoff.Run(ctx, env); err != nil {
+		t.Fatalf("HandoffStage.Run failed: %v", err)
+	}
+	var artifact struct {
+		ChangedFiles []contract.ChangedFile `json:"changed_files"`
+	}
+	if err := json.Unmarshal(readStageArtifact(t, root, changedFilesArtifactRelPath), &artifact); err != nil {
+		t.Fatalf("changed files artifact invalid: %v", err)
+	}
+	byPath := map[string]contract.ChangedFile{}
+	for _, file := range artifact.ChangedFiles {
+		byPath[file.Path] = file
+	}
+	if byPath["develop.txt"].Status != "M" || byPath["git-only.txt"].Status != "A" {
+		t.Fatalf("changed files did not come from git diff: %#v", artifact.ChangedFiles)
+	}
+	if len(byPath["develop.txt"].OwningTasks) != 1 || byPath["develop.txt"].OwningTasks[0] != "T1.01" {
+		t.Fatalf("expected task owner preserved for expected file: %#v", byPath["develop.txt"])
+	}
+	if len(byPath["git-only.txt"].OwningTasks) != 0 {
+		t.Fatalf("unexpected owner for git-only file: %#v", byPath["git-only.txt"])
+	}
+}
+
+func TestDetectChangedFilesFallsBackWhenGitUnavailable(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, env := seededDevelopEnv(t, ctx, root, "proj_handoff_git_fallback", "run_handoff_git_fallback")
+	writePipelineFile(t, root, "develop.txt", "changed")
+
+	changed, err := detectChangedFiles(ctx, store, env.Run.RunID(), root, "missing-base-ref", "HEAD")
+	if err != nil {
+		t.Fatalf("detectChangedFiles failed: %v", err)
+	}
+	if len(changed) != 1 || changed[0].Path != "develop.txt" || changed[0].Status != "modified" {
+		t.Fatalf("expected fallback to expected-file manifest, got %#v", changed)
 	}
 }
 
@@ -192,5 +253,25 @@ func TestVerifyStageFakeRepairSeamRecordsAttempt(t *testing.T) {
 	}
 	if called != 1 || len(report.RepairAttempts) != 1 || report.Commands[0].Attempts != 2 {
 		t.Fatalf("fake repair seam not used: called=%d report=%#v", called, report)
+	}
+}
+
+func runPipelineGit(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, output)
+	}
+}
+
+func writePipelineFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	path := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
 	}
 }

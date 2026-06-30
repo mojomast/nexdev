@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mojomast/nexdev/internal/contract"
+	gitdiff "github.com/mojomast/nexdev/internal/git"
 	"github.com/mojomast/nexdev/internal/safety"
 	"github.com/mojomast/nexdev/internal/state"
 )
@@ -32,6 +33,8 @@ const (
 
 type VerifyStageConfig struct {
 	ProjectRoot    string
+	GitBaseRef     string
+	GitHeadRef     string
 	Commands       []string
 	Policy         safety.ToolPolicy
 	OutputCapBytes int
@@ -107,7 +110,7 @@ func (s *VerifyStage) Run(ctx context.Context, env StageEnv) error {
 	if err := persistVerifyEvent(ctx, env, contract.EventTypeVerifyStarted, "started", map[string]any{"command_count": len(s.commands())}); err != nil {
 		return err
 	}
-	changed, err := detectChangedFiles(ctx, env.Store.(*state.Store), env.Run.RunID(), s.projectRoot())
+	changed, err := detectChangedFiles(ctx, env.Store.(*state.Store), env.Run.RunID(), s.projectRoot(), s.config.GitBaseRef, s.config.GitHeadRef)
 	if err != nil {
 		return err
 	}
@@ -325,6 +328,8 @@ func appendTail(existing, msg string, capBytes int) string {
 
 type HandoffStageConfig struct {
 	ProjectRoot string
+	GitBaseRef  string
+	GitHeadRef  string
 	Request     string
 	Now         func() time.Time
 }
@@ -384,7 +389,7 @@ func (s *HandoffStage) Run(ctx context.Context, env StageEnv) error {
 		return err
 	}
 	store := env.Store.(*state.Store)
-	changed, err := detectChangedFiles(ctx, store, env.Run.RunID(), s.projectRoot())
+	changed, err := detectChangedFiles(ctx, store, env.Run.RunID(), s.projectRoot(), s.config.GitBaseRef, s.config.GitHeadRef)
 	if err != nil {
 		return err
 	}
@@ -473,7 +478,7 @@ func (s *CompleteStage) Output(ctx context.Context, env StageEnv) (map[string]an
 	return map[string]any{"complete": true}, ctx.Err()
 }
 
-func detectChangedFiles(ctx context.Context, store *state.Store, runID, root string) ([]contract.ChangedFile, error) {
+func detectChangedFiles(ctx context.Context, store *state.Store, runID, root, baseRef, headRef string) ([]contract.ChangedFile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -490,6 +495,11 @@ func detectChangedFiles(ctx context.Context, store *state.Store, runID, root str
 				}
 				owners[path][task.Spec.ID] = true
 			}
+		}
+	}
+	if strings.TrimSpace(baseRef) != "" {
+		if gitChanged, err := gitdiff.ChangedFiles(ctx, root, baseRef, headRef); err == nil {
+			return changedFilesFromGit(root, gitChanged, owners), nil
 		}
 	}
 	paths := make([]string, 0, len(owners))
@@ -512,6 +522,32 @@ func detectChangedFiles(ctx context.Context, store *state.Store, runID, root str
 		changed = append(changed, contract.ChangedFile{Path: rel, Status: "modified", SHA256: hex.EncodeToString(hash[:]), ByteSize: int64(len(data)), OwningTasks: ownerIDs})
 	}
 	return changed, nil
+}
+
+func changedFilesFromGit(root string, gitChanged []gitdiff.ChangedFile, owners map[string]map[string]bool) []contract.ChangedFile {
+	changed := make([]contract.ChangedFile, 0, len(gitChanged))
+	for _, file := range gitChanged {
+		item := contract.ChangedFile{Path: file.Path, Status: file.Status, OwningTasks: ownerIDsForChangedPath(file.Path, owners)}
+		if file.Status != "D" {
+			if data, err := os.ReadFile(filepath.Join(root, file.Path)); err == nil {
+				hash := sha256.Sum256(data)
+				item.SHA256 = hex.EncodeToString(hash[:])
+				item.ByteSize = int64(len(data))
+			}
+		}
+		changed = append(changed, item)
+	}
+	return changed
+}
+
+func ownerIDsForChangedPath(path string, owners map[string]map[string]bool) []string {
+	ownerSet := owners[path]
+	ids := make([]string, 0, len(ownerSet))
+	for id := range ownerSet {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func expandExpectedPath(root, pattern string) []string {
