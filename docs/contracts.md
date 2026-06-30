@@ -259,7 +259,7 @@ Task and blocker repository behavior:
 - Blocker task scope references `nexdev_tasks`, not legacy geoffrussy `tasks`. Project/run foreign keys enforce valid Nexdev scope while permitting run-level blockers with no task ID.
 
 Auxiliary follow-ups:
-- M7 must write reviewed `TaskSpec` rows through `CreateNexdevTask` after plan validation/versioning and must continue to own DAG cycle checks, expected-file policy checks, and plan edit events.
+- M7 planning writes validated `TaskSpec` rows through `CreateNexdevTask` with pending status after plan validation/versioning and owns DAG cycle checks plus write-task expected-file checks. Review finalization still owns approval semantics, plan edit events, and any version increment after human mutation.
 - M8 must load tasks with `ListNexdevTasks`, update execution status through `UpdateNexdevTaskStatus`, and create blockers with `CreateNexdevBlocker` without relying on legacy geoffrussy task/blocker semantics.
 - M9 must use Nexdev task/blocker repositories for detour triggers, depth-exceeded blockers, and spliced task persistence, while coordinating plan edits/events outside `internal/state`.
 - M8 must consume steering repository rows when building task prompts and must keep steering unable to override safety policy, schemas, or acceptance criteria.
@@ -386,6 +386,14 @@ Validation structured output:
 - The durable disk artifact path is `.nexdev/artifacts/validation_report.json` with artifact kind `validation_report`. Verdicts `pass` and `warn` also write `.nexdev/artifacts/validated_design.md` with artifact kind `validated_design`.
 - Conflicts, blockers, and `block` verdicts return `BlockedError` by default after report artifact persistence. The stage does not delete or weaken requirements.
 
+Planning structured output:
+- `internal/pipeline.PlanSketchStage` calls `provider.StructuredClient.CallStructured` with `provider.SlotPlanSketch` and strict JSON decoding into `[]contract.PhaseSketch`. Semantic validation requires at least one titled phase. The stage canonicalizes returned phases after decode: duplicate normalized titles are removed, IDs become `phase_NNN`, and numbers become canonical one-based order.
+- `internal/pipeline.PlanDetailStage` calls `provider.StructuredClient.CallStructured` with `provider.SlotPlanDetail` and strict JSON decoding into `[]contract.TaskSpec`. Semantic validation requires every task to have acceptance criteria, write/edit tasks to list expected project-relative files or globs, dependencies to reference returned task IDs, and the dependency graph to be acyclic.
+- Planning artifact paths are `.nexdev/artifacts/devplan.json`, `.nexdev/artifacts/devplan.md`, and `.nexdev/artifacts/phaseNNN.md`. Detailed-plan tasks are persisted to `nexdev_tasks` with stable `plan_version` and `plan_order` after validation. Pending task status means pre-review and must not satisfy develop by itself.
+- `internal/pipeline.ReviewStage` supports contract modes `manual`, `auto`, `ci`, and `skip`. Manual returns a `BlockedError` reason `review_required` until approval is performed through `ReviewService`. CI rejects high/critical-risk tasks without `test_commands`. Skip mode requires an explicit allowance flag and writes the same approval marker as other successful modes. Auto is currently a minimal local approval over already validated pending tasks; provider-backed auto review remains a future refinement.
+- Review approval writes `.nexdev/artifacts/review_approval.json` with marker `reviewed_approved_plan`, indexes artifact kind `review_approval`, and returns the same marker through stage output. This marker is the deterministic develop prerequisite until a future state migration adds first-class approval columns.
+- Review mutations update only latest-version pending tasks. `UpdatePendingTask` can update title, description, expected files, acceptance criteria, test commands, risk level, required tools, and notes. `DeletePendingTask` deletes a pending task only when no remaining task depends on it and at least one task remains. Every successful mutation increments all current task rows to the next `plan_version`, preserves deterministic plan order, and writes a `plan_edit_events` row with before/after versions, edit type, target, patch JSON, and actor.
+
 M4 provider wrapper behavior:
 - `internal/provider.StructuredClient.CallStructured` is the compatibility layer for the imported geoffrussy provider boundary, which currently exposes `Provider.Call(ctx, model, prompt)` rather than the illustrative request-shaped interface in `SPEC.md` section 11.1.
 - Callers pass a `Slot`, prompt, destination pointer, and `StructuredOptions`; the wrapper resolves provider/model through `Router.Resolve`, calls the resolved provider instance, decodes JSON into the destination type, and only updates the destination after decode and semantic validation succeed.
@@ -445,10 +453,11 @@ Fake provider behavior:
 ## 8. Executor, Steering, and Detour Contracts
 
 Executor contracts:
-- `internal/executor/contracts.go` defines the M1 control boundary only.
-- Required controls are `CurrentTask`, `Pause`, `Resume`, `Cancel`, `SkipTask`, and `SetSteeringContext` with `context.Context` where mutations can block or be cancelled.
-- `TaskUpdateEventMapping` maps imported geoffrussy `TaskUpdate` values to Nexdev task event types with source `executor` and stage `develop`.
-- `TaskReport` is an inert report shape for later M8 state/artifact integration; no execution behavior is implemented by M1-C7.
+- `internal/executor/contracts.go` defines the control boundary and report shape. Required controls are `CurrentTask`, `Pause`, `Resume`, `Cancel`, `SkipTask`, and `SetSteeringContext` with `context.Context` where mutations can block or be cancelled.
+- `TaskUpdateEventMapping` maps imported geoffrussy `TaskUpdate` values to Nexdev task event types with source `executor` and stage `develop`. The mapping intentionally stores the stage as the stable string `develop` to keep `internal/executor` decoupled from `internal/pipeline` and avoid import cycles.
+- `internal/executor.NexdevExecutor` implements the M8 bridge for fake/safe worker execution. It loads `nexdev_tasks`, persists task status changes through `UpdateNexdevTaskStatus`, persists task events through `Store.PersistEvent`, creates `nexdev_blockers` on worker blockers, and returns `TaskReport` values.
+- `FakeWorker` is deterministic and non-executing. It can emit progress/completion/blocker updates and write files only when the path matches the task `expected_files` policy and passes `internal/safety.PathSanitizer`. Shell, network, and real LLM code execution are not implemented by this bridge.
+- `internal/pipeline.DevelopStage` requires the review approval artifact marker `reviewed_approved_plan` before invoking the executor bridge and must not treat pre-review pending tasks as approved.
 
 Steering contracts:
 - `internal/steering/contracts.go` defines durable steering `Message`, selected prompt `Context`, source constants, and a minimal store interface.
@@ -458,13 +467,19 @@ Steering contracts:
 Detour contracts:
 - `internal/detour/contracts.go` aliases shared `internal/contract.DetourRequest` and `DetourResult` and uses `contract.TaskSpec` for new tasks.
 - `RequestContext` captures current task, neighboring tasks, blocker, phase, design summary, repo context, and depth data for later M9 detour generation.
-- `Generator`, `Splicer`, and `DepthPolicy` are compile-safe interfaces only. Provider-backed detour generation and durable plan mutation remain unimplemented.
+- `WorkflowManager` implements provider-backed detour generation and durable plan mutation over `nexdev_tasks`, `nexdev_blockers`, `detour_records`, and persisted events. It uses `provider.SlotPlanDetail` through `provider.StructuredClient` until a dedicated detour provider slot is assigned.
+- `SpliceDetourTasks` assigns new tasks immediate post-trigger order metadata and returns ID conflicts without persisting. Dense persisted plans are handled by `Store.InsertNexdevTasksAfter`, which transactionally shifts later tasks in the same run and plan version before inserting detour rows, preserving existing relative order and plan version metadata.
 - Default max depth is `3`; depth exhaustion must surface blocker reason `detour_depth_exceeded` and must not silently skip.
+- Depth exhaustion creates an open `nexdev_blockers` row, marks the trigger task blocked, and marks the run blocked. Successful detours persist `detour_records.result_json`, mark the trigger task `pending_after_detour`, and persist `detour_created`.
 
 Implemented M1-C7 tests:
 - `go test ./internal/executor` checks task update to event mapping and control interface compilation.
 - `go test ./internal/steering` checks source constants, safety override prohibition, and store interface compilation.
 - `go test ./internal/detour` checks shared detour types, splice/depth contracts, and existing imported detour behavior.
+
+Current M9 detour tests:
+- `go test ./internal/detour` covers blocker-triggered detour request capture, provider-backed structured generation through the fake provider, local task validation, immediate splice ordering after the trigger for gapped and dense plans, ID conflict detection, max-depth blocker creation/no silent skip, structured-output repair, `detour_records` persistence, trigger status updates, and `detour_created` event persistence.
+- `go test ./internal/state` covers dense-plan state insertion after a trigger task, multiple inserted detour tasks, shifted later task orders with stable relative order, dependency validation across inserted tasks, and stable plan version metadata.
 
 ## 9. Config Contract
 
@@ -615,7 +630,7 @@ Artifact index fields:
 
 Authoritative first-wave Go structs:
 - `internal/contract/artifacts.go`
-- Status: artifact kind constants, manifest/item structs, changed-file manifest, run summary, stage summary, and provider usage structs exist for downstream M1 workers. The M3 state repository indexes artifact rows. M6 now writes `.nexdev/artifacts/repo_analysis.json`, `.nexdev/artifacts/interview.json`, `.nexdev/artifacts/complexity_profile.json`, `.nexdev/artifacts/design_draft.md`, `.nexdev/artifacts/design_review.json`, `.nexdev/artifacts/validation_report.json`, and `.nexdev/artifacts/validated_design.md` from concrete stages and indexes them when a concrete state store and project/run identifiers are available; shared artifact writing helpers, manifests, and `artifact_updated` event emission remain follow-up work.
+- Status: artifact kind constants, manifest/item structs, changed-file manifest, run summary, stage summary, and provider usage structs exist for downstream M1 workers. The M3 state repository indexes artifact rows. M6 now writes `.nexdev/artifacts/repo_analysis.json`, `.nexdev/artifacts/interview.json`, `.nexdev/artifacts/complexity_profile.json`, `.nexdev/artifacts/design_draft.md`, `.nexdev/artifacts/design_review.json`, `.nexdev/artifacts/validation_report.json`, and `.nexdev/artifacts/validated_design.md` from concrete stages and indexes them when a concrete state store and project/run identifiers are available. M7 planning writes and indexes `.nexdev/artifacts/devplan.json`, `.nexdev/artifacts/devplan.md`, and phase markdown artifacts. Shared artifact writing helpers, manifests, and `artifact_updated` event emission remain follow-up work.
 
 ## 13. Observability Contract
 

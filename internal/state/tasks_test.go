@@ -104,10 +104,73 @@ func TestStoreNexdevTaskRepositoryConstraints(t *testing.T) {
 	}
 }
 
+func TestStoreInsertNexdevTasksAfterShiftsDensePlanOrders(t *testing.T) {
+	store := newRunArtifactTestStore(t)
+	seedStateCRun(t, store, "proj_dense", "run_dense")
+	ctx := context.Background()
+	for _, task := range []struct {
+		id    string
+		order int
+	}{
+		{id: "T1.01", order: 1},
+		{id: "T1.02", order: 2},
+		{id: "T1.03", order: 3},
+	} {
+		if err := store.CreateNexdevTask(ctx, &NexdevTask{ProjectID: "proj_dense", RunID: "run_dense", Status: NexdevTaskStatusPending, PlanVersion: 7, PlanOrder: task.order, Spec: contract.TaskSpec{ID: task.id, PhaseID: "phase_001", Title: task.id, AcceptanceCriteria: []string{"done"}}}); err != nil {
+			t.Fatalf("CreateNexdevTask %s failed: %v", task.id, err)
+		}
+	}
+
+	inserted, err := store.InsertNexdevTasksAfter(ctx, "T1.01", []*NexdevTask{
+		{Status: NexdevTaskStatusPending, Spec: contract.TaskSpec{ID: "D1.01", PhaseID: "phase_001", Title: "D1.01", AcceptanceCriteria: []string{"done"}}},
+		{Status: NexdevTaskStatusPending, Spec: contract.TaskSpec{ID: "D1.02", PhaseID: "phase_001", Title: "D1.02", Dependencies: []string{"D1.01"}, AcceptanceCriteria: []string{"done"}}},
+	})
+	if err != nil {
+		t.Fatalf("InsertNexdevTasksAfter failed: %v", err)
+	}
+	if len(inserted) != 2 || inserted[0].PlanOrder != 2 || inserted[1].PlanOrder != 3 || inserted[0].PlanVersion != 7 || inserted[1].PlanVersion != 7 {
+		t.Fatalf("inserted metadata = %#v", inserted)
+	}
+
+	tasks, err := store.ListNexdevTasks(ctx, NexdevTaskListOptions{RunID: "run_dense", PlanVersion: 7})
+	if err != nil {
+		t.Fatalf("ListNexdevTasks failed: %v", err)
+	}
+	if got, want := nexdevTaskIDs(tasks), []string{"T1.01", "D1.01", "D1.02", "T1.02", "T1.03"}; !sameStrings(got, want) {
+		t.Fatalf("task order = %v, want %v", got, want)
+	}
+	orders := map[string]int{}
+	versions := map[string]int{}
+	for _, task := range tasks {
+		orders[task.Spec.ID] = task.PlanOrder
+		versions[task.Spec.ID] = task.PlanVersion
+	}
+	if orders["T1.01"] != 1 || orders["T1.02"] != 4 || orders["T1.03"] != 5 {
+		t.Fatalf("shifted orders = %#v", orders)
+	}
+	for id, version := range versions {
+		if version != 7 {
+			t.Fatalf("task %s plan version = %d, want 7", id, version)
+		}
+	}
+}
+
 func nexdevTaskIDs(tasks []*NexdevTask) []string {
 	ids := make([]string, 0, len(tasks))
 	for _, task := range tasks {
 		ids = append(ids, task.Spec.ID)
 	}
 	return ids
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

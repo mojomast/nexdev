@@ -1967,6 +1967,22 @@ Acceptance criteria:
 
 ### M7. Plan Sketch, Plan Detail, Review, Artifact Generation
 
+Status: planning and review gate service/stage implemented and package-verified on 2026-06-30; review UI/control-plane event integration remains follow-up work.
+
+Evidence:
+- `internal/pipeline/plan_sketch.go` implements provider-backed `plan_sketch` with `provider.SlotPlanSketch`, strict structured `[]contract.PhaseSketch`, validation repair, canonical phase numbering/IDs, deduplication, and `.nexdev/artifacts/devplan.json` phase sketch output.
+- `internal/pipeline/plan_detail.go` implements provider-backed `plan_detail` with `provider.SlotPlanDetail`, strict structured `[]contract.TaskSpec`, validation for acceptance criteria, write-task expected files, dependency references, and dependency cycles, deterministic `devplan.json`, `devplan.md`, and `phaseNNN.md` rendering, artifact indexing, and pending `nexdev_tasks` persistence with stable plan version/order.
+- Tests in `internal/pipeline/plan_sketch_test.go` and `internal/pipeline/plan_detail_test.go` cover phase numbering/deduplication, validation failures, dependency cycle rejection, artifact rendering/indexing, state task persistence, invalid structured repair, and stage interface/resume behavior with the fake provider.
+- `internal/pipeline/review.go` implements review modes `manual`, `auto`, `ci`, and explicit-allowance `skip` over persisted pending `nexdev_tasks`; approval writes `.nexdev/artifacts/review_approval.json` and stage output marker `reviewed_approved_plan`; update/delete APIs reject non-pending unsafe edits, increment plan version, and write `plan_edit_events` with actor and patch metadata.
+- Tests in `internal/pipeline/review_test.go` cover manual blocking, approval/resume marker behavior, edit version increments and `plan_edit_events`, delete pending task safety, non-pending edit rejection, high-risk CI rejection without tests, skip allowance, and auto approval marker indexing.
+- Evidence command: `go test ./internal/pipeline` passed.
+
+Next action guidance:
+- M8 develop prerequisite wiring should require the `reviewed_approved_plan` marker from review stage output or `.nexdev/artifacts/review_approval.json`; it must not treat pre-review `pending` tasks as approved.
+- App/runner wiring should pass `PlanSketchStage.Phases()` into `PlanDetailStage` or load equivalent artifact output once artifact handoff wiring exists.
+- Control-plane/event follow-up should route task mutation and approval endpoints through `ReviewService`, enforce admin/operator roles, and emit `plan_updated`, `review_required`, `review_completed`, and `artifact_updated` events after persistence through the eventual shared artifact/event helper.
+- M12/TUI follow-up should implement review UI as a client over the same service semantics rather than owning plan state; future state refinement can add first-class task approval columns to replace the current deterministic marker artifact.
+
 Purpose:
 - Generate high-level phases, detailed tasks, human-readable plans, and review/edit/version flow.
 
@@ -2018,6 +2034,20 @@ Acceptance criteria:
 
 ### M8. Executor Integration, Steering, Live Task Context
 
+Status: M8-DEVELOP-EXECUTOR verified on 2026-06-30 for the safe fake-worker develop bridge and review approval prerequisite. Real LLM code execution, shell/network tools, control-plane handlers, full steering prompt context, project-lock lifecycle wiring, and changed-file manifests remain follow-up work.
+
+Evidence:
+- `internal/executor.NexdevExecutor` lists pending/pending-after-detour `nexdev_tasks`, updates status through state, persists mapped task events with `Store.PersistEvent`, creates `nexdev_blockers` for worker blockers, exposes pause/resume/cancel/skip/current-task/steering controls, and returns `TaskReport` values.
+- `internal/executor.FakeWorker` deterministically emits progress/completion/blocker updates and can write files only when they match task `ExpectedFiles` and pass `internal/safety.PathSanitizer`. It does not execute shell commands, network calls, or real LLM code.
+- `internal/pipeline.DevelopStage` requires `.nexdev/artifacts/review_approval.json` with `reviewed_approved_plan` before execution and leaves pre-review pending tasks untouched when the marker is missing.
+- Evidence commands: `go test ./internal/executor ./internal/pipeline` passed; `go test ./...` passed.
+
+Next action guidance:
+- Control-plane and CLI workers can wire pause/resume/skip/cancel/steer to `executor.Control` without adding handler behavior inside `internal/executor`.
+- Steering follow-up should enrich prompt context from requirements, design, plan notes, acceptance criteria, expected files, and bounded repo context while preserving `SafetyPolicyOverrideAllowed=false`.
+- Git/verify follow-ups should populate changed-file manifests and task report changed files; shell/network execution must remain absent until an explicitly assigned policy-gated tool runner exists.
+- App lifecycle follow-up should acquire the project lock before mutating develop runs.
+
 Purpose:
 - Bridge approved plans into controlled task execution.
 
@@ -2066,6 +2096,22 @@ Acceptance criteria:
 - Fake develop can execute one approved task safely and persist events/status.
 
 ### M9. Detour and Blocker/Deblocker Workflow
+
+Status: M9-DETOUR-WORKFLOW implemented and package-verified on 2026-06-30. M9-DEBLOCK-DENSE-ORDER resolved the dense-plan ordering blocker on 2026-06-30 with safe state-owned order shifting. Control-plane route/UI, optional operator approval, and automatic develop resume remain follow-up work.
+
+Evidence:
+- `internal/detour/manager.go` adds `WorkflowManager`, captures trigger task/blocker/neighbor/design/repo/depth context, calls `provider.StructuredClient` through `provider.SlotPlanDetail`, validates generated `TaskSpec` rows, enforces max depth, creates `detour_depth_exceeded` blockers, persists detour records, marks triggers `pending_after_detour`, and persists `detour_created` events.
+- `internal/detour/splice.go` adds deterministic immediate splice ordering after the trigger, detour ID conflict detection, and state-facing inserted task order metadata.
+- `internal/state/tasks.go` adds `InsertNexdevTasksAfter`, which transactionally shifts later tasks in the same run and plan version before inserting detour rows so dense `plan_order` values satisfy immediate splice semantics without violating uniqueness.
+- `internal/detour/manager_test.go` and `internal/detour/splice_test.go` cover blocker-triggered request flow, task validation, dense and gapped splice ordering, ID conflict detection, depth-exceeded blocker/no silent skip, fake-provider structured repair, detour record persistence, event persistence, and trigger status updates.
+- `internal/state/tasks_test.go` covers dense-plan insertion with multiple detour tasks, dependency validation across inserted tasks, stable relative order for existing later tasks, and stable plan version metadata.
+- Evidence commands: `go test ./internal/state ./internal/detour` passed; `go test ./...` passed.
+
+Next action guidance:
+- M10 control-plane should expose `POST /detour` by calling `WorkflowManager.Request`/`RequestForBlocker` through an authenticated operator/admin service path and should broadcast only persisted events.
+- M12 CLI/TUI should present detour context/result previews as clients of the same service path, not by mutating plan state directly.
+- Dense-order splicing is now state-owned through `InsertNexdevTasksAfter`; future review/control-plane task mutation paths should reuse state-owned reorder semantics rather than implementing ad hoc plan-order shifts.
+- Provider/config follow-up should decide whether to add a dedicated detour provider slot; M9 intentionally used `provider.SlotPlanDetail` without changing provider contracts.
 
 Purpose:
 - Implement first-class detours and blocker flow.
@@ -2802,11 +2848,14 @@ This matrix is updated as implementation proceeds. M0 and M1 first-wave evidence
 | STRUCT-001 | Structured outputs | Strict decode, semantic validate, repair/reject | M4/M6 | Provider/Pipeline | `internal/contract/model_outputs.go`; `internal/provider/structured.go`; `internal/pipeline/repo_analyze.go`; `internal/pipeline/interview.go`; `internal/pipeline/complexity.go`; `internal/pipeline/design.go`; `internal/pipeline/hivemind.go`; `internal/pipeline/validate.go` | `go test ./internal/contract`; `go test ./internal/provider`; `go test ./internal/pipeline`; broader pipeline integration later | contracts; architecture; testing | implemented | Provider wrapper now strict-decodes, rejects unknown fields, validates semantically, repairs/rejects with capped attempts, and returns raw/usage metadata; M6 repo_analyze deterministically produces `contract.RepoAnalysis`; M6 interview/complexity/design/hivemind/validate consume `StructuredClient` with fake-provider repair coverage; raw provider-response persistence remains state/observability follow-up |
 | HIVEMIND-001 | Hivemind | Provider-backed multi-voice critique and synthesis artifact | M6 | Pipeline | `internal/pipeline/hivemind.go` | `go test ./internal/pipeline`; full pipeline integration later | architecture; contracts; testing | implemented | M6-HIVEMIND-VALIDATE uses `SlotHivemindVoice` and `SlotHivemindSynthesis`, configured voices, sequential default, bounded parallel option, design review artifact writing/indexing, structured repair coverage, and blocks on synthesis revise/block after writing review |
 | VALIDATE-001 | Validation | Provider-backed pre-plan sanity report | M6 | Pipeline | `internal/pipeline/validate.go` | `go test ./internal/pipeline`; full pipeline integration later | architecture; contracts; testing | implemented | M6-HIVEMIND-VALIDATE uses `SlotValidate`, writes validation report and validated design for pass/warn, blocks conflicts/blockers/block verdicts by default, and keeps requirements intact in prompt contract |
+| PLAN-001 | Planning | Generate phase sketches, detailed task DAG, and anchored plan artifacts | M7 | Pipeline | `internal/pipeline/plan_sketch.go`; `internal/pipeline/plan_detail.go`; `internal/pipeline/plan_validation.go` | `go test ./internal/pipeline`; full pipeline integration later | architecture; contracts; testing | implemented | M7 produces canonical phase IDs/numbers, validates task acceptance criteria, expected files, dependency references, and dependency cycles, renders deterministic `devplan.json`, `devplan.md`, and `phaseNNN.md`, indexes artifacts, and persists pending `nexdev_tasks`; parallel file-overlap assignment remains later executor/worktree work |
+| REVIEW-001 | Review | Gate plan before develop with approval, edits, versioning, and audit events | M7 | Pipeline | `internal/pipeline/review.go` | `go test ./internal/pipeline`; control-plane/TUI integration later | architecture; contracts; testing | implemented | M7 supports manual/auto/ci/explicit skip modes, writes approval marker `.nexdev/artifacts/review_approval.json` with `reviewed_approved_plan`, rejects unsafe non-pending edits, increments plan versions, and writes `plan_edit_events`; review task update/delete currently use direct SQL through `Store.DB()` pending state repository methods and must stay internal until repository follow-up |
+| EXEC-001 | Develop executor | Safe fake-worker develop bridge over approved tasks | M8 | Executor/Pipeline | `internal/executor/nexdev.go`; `internal/pipeline/develop.go` | `go test ./internal/executor ./internal/pipeline`; `go test ./...`; `go vet ./...`; `go mod verify` | architecture; contracts; testing | verified | M8 loads reviewed `nexdev_tasks`, requires the review approval marker, persists task status/events, creates blockers, rejects unexpected writes through expected-file/path checks, and exposes in-process pause/resume/cancel/skip/current-task controls. Real LLM execution, shell/network tools, control-plane/CLI wiring, project-lock lifecycle, changed-file manifests, and full artifact-backed prompt context remain follow-up work |
 | SECURITY-001 | Tool/path safety | Deny shell by default, path/symlink policy | M2/M15 | Security | `internal/config`, `internal/safety`, `internal/git` | `go test ./internal/config ./internal/safety`, `go test ./internal/safety`, `go test ./internal/git`; security fixtures later | architecture; contracts; testing | in_progress | M2 config/path, security helper, and project lock baselines verified; shell/network execution is not implemented; policy loading/enforcement integration, non-logging redaction boundaries, prompt-warning events, stale lock recovery, expected-file checks, and M15 fixtures remain follow-up |
 | LOCK-001 | Runtime paths | Single mutating process project lock | M2/M15 | Git/Security | `internal/git/project_lock.go` | `go test ./internal/git`; race/multi-process lifecycle tests later | architecture; contracts; testing | implemented | `.nexdev/run/project.lock` helper resolves through path sanitizer, acquires with exclusive create, writes pid/timestamp metadata, rejects held locks, and releases by removing the file; app/executor lifecycle wiring and stale-lock recovery remain follow-up |
 | OBS-001 | Observability | Structured slog baseline with redaction and canonical fields | M2/M14 | Observability | `internal/observability` | `go test ./internal/observability`; integration/no-leak/OTel/cost tests later | architecture; contracts; testing | in_progress | M2 logging baseline verified with JSON/text construction, level filtering, redacted messages/attrs, and field helpers; OTel, metrics, audit logs, runtime instrumentation, and cost ledger remain M14 |
-| STEER-001 | Steering | Durable steering events influence prompt context only | M3/M8 | State/Executor | `internal/steering/contracts.go`; `internal/state/steering.go` | `go test ./internal/steering`; `go test ./internal/state`; prompt tests later | contracts; testing | in_progress | Durable steering repository verified; prompt context selection, summarization, and executor integration remain M8 |
-| DETOUR-001 | Detour | Blocker/manual detour creates minimal spliced tasks | M3/M9 | State/Detour | `internal/detour/contracts.go`; `internal/state/detours.go` | `go test ./internal/detour`; `go test ./internal/state`; splice/generation tests later | architecture/contracts; testing | in_progress | Durable detour record repository verified; provider generation, depth/blocker policy, plan edit coordination, and task splicing remain M9 |
+| STEER-001 | Steering | Durable steering events influence prompt context only | M3/M8 | State/Executor | `internal/steering/contracts.go`; `internal/state/steering.go`; `internal/executor/nexdev.go` | `go test ./internal/steering`; `go test ./internal/state`; `go test ./internal/executor ./internal/pipeline` | contracts; testing | verified | M8 persists steering events, emits `steering_added`, selects last-N task-scoped steering messages plus latest summary into prompt context, and preserves `SafetyPolicyOverrideAllowed=false`. Artifact-backed requirements/design/repo context and model/deterministic summarization beyond stored summaries remain follow-up |
+| DETOUR-001 | Detour | Blocker/manual detour creates minimal spliced tasks | M3/M9/M10/M12 | State/Detour/Control/CLI/TUI | `internal/detour/contracts.go`; `internal/state/detours.go`; `internal/detour/manager.go`; `internal/detour/splice.go` | `go test ./internal/detour`; `go test ./internal/state`; M10/M12 integration tests later | architecture/contracts; testing | blocked | Core provider-backed generation, validation, depth-exceeded blocker, detour record persistence, trigger `pending_after_detour`, and `detour_created` event are package-verified. Full acceptance is blocked because M7 persists dense `plan_order` values and M9 gap-only splicing cannot insert after non-final tasks without safe reorder/version semantics. Public HTTP/CLI/TUI adapters remain M10/M12 follow-up. |
 | VERIFY-001 | Verify | Policy-gated verification commands with repair loop | M7/M16 | Pipeline | `internal/pipeline/verify.go` | verify tests/E2E | testing | planned | Command caps/timeouts |
 | HANDOFF-001 | Handoff | Write handoff, changed files, run summary | M7/M16 | Pipeline/Git | artifacts + git | golden/E2E | README/operating | planned | Anchored artifacts |
 | TEST-001 | Testing | Fake-provider full pipeline and security tests | M16/M19 | Test Infra | `internal/testutil`; `internal/provider/fake.go`; scripts/tests later | `go test ./internal/testutil`; `go test ./internal/provider`; all gates later | testing | in_progress | M1-C9 verified shared fixture contracts; M4 verified provider-owned fake provider; fake worker, E2E, and security fixtures remain M16/M19 |

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/mojomast/nexdev/internal/contract"
-	"github.com/mojomast/nexdev/internal/pipeline"
 	"github.com/mojomast/nexdev/internal/steering"
 )
 
@@ -36,7 +35,7 @@ func TestTaskUpdateEventMapping(t *testing.T) {
 		if mapping.Source != contract.EventSourceExecutor {
 			t.Fatalf("mapping for %q source = %q", updateType, mapping.Source)
 		}
-		if mapping.Stage != pipeline.StageDevelop {
+		if mapping.Stage != "develop" {
 			t.Fatalf("mapping for %q stage = %q", updateType, mapping.Stage)
 		}
 	}

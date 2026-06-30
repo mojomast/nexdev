@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/mojomast/nexdev/internal/contract"
-	"github.com/mojomast/nexdev/internal/pipeline"
 	"github.com/mojomast/nexdev/internal/steering"
 )
 
@@ -26,7 +25,7 @@ const (
 type CurrentTaskSnapshot struct {
 	ProjectID string            `json:"project_id"`
 	RunID     string            `json:"run_id"`
-	Stage     pipeline.Stage    `json:"stage"`
+	Stage     string            `json:"stage"`
 	Task      contract.TaskSpec `json:"task"`
 	Status    TaskStatus        `json:"status"`
 	StartedAt time.Time         `json:"started_at,omitempty"`
@@ -44,20 +43,20 @@ type Control interface {
 
 // TaskUpdateEvent describes how an executor TaskUpdate becomes a durable event.
 type TaskUpdateEvent struct {
-	EventType string         `json:"event_type"`
-	Source    string         `json:"source"`
-	Stage     pipeline.Stage `json:"stage"`
+	EventType string `json:"event_type"`
+	Source    string `json:"source"`
+	Stage     string `json:"stage"`
 }
 
 var TaskUpdateEventMapping = map[UpdateType]TaskUpdateEvent{
-	TaskStarted:   {EventType: contract.EventTypeTaskStarted, Source: contract.EventSourceExecutor, Stage: pipeline.StageDevelop},
-	TaskProgress:  {EventType: contract.EventTypeTaskProgress, Source: contract.EventSourceExecutor, Stage: pipeline.StageDevelop},
-	TaskCompleted: {EventType: contract.EventTypeTaskCompleted, Source: contract.EventSourceExecutor, Stage: pipeline.StageDevelop},
-	TaskError:     {EventType: contract.EventTypeTaskError, Source: contract.EventSourceExecutor, Stage: pipeline.StageDevelop},
-	TaskBlocked:   {EventType: contract.EventTypeTaskBlocked, Source: contract.EventSourceExecutor, Stage: pipeline.StageDevelop},
-	TaskPaused:    {EventType: contract.EventTypeTaskPaused, Source: contract.EventSourceExecutor, Stage: pipeline.StageDevelop},
-	TaskResumed:   {EventType: contract.EventTypeTaskResumed, Source: contract.EventSourceExecutor, Stage: pipeline.StageDevelop},
-	TaskSkipped:   {EventType: contract.EventTypeTaskSkipped, Source: contract.EventSourceExecutor, Stage: pipeline.StageDevelop},
+	TaskStarted:   {EventType: contract.EventTypeTaskStarted, Source: contract.EventSourceExecutor, Stage: "develop"},
+	TaskProgress:  {EventType: contract.EventTypeTaskProgress, Source: contract.EventSourceExecutor, Stage: "develop"},
+	TaskCompleted: {EventType: contract.EventTypeTaskCompleted, Source: contract.EventSourceExecutor, Stage: "develop"},
+	TaskError:     {EventType: contract.EventTypeTaskError, Source: contract.EventSourceExecutor, Stage: "develop"},
+	TaskBlocked:   {EventType: contract.EventTypeTaskBlocked, Source: contract.EventSourceExecutor, Stage: "develop"},
+	TaskPaused:    {EventType: contract.EventTypeTaskPaused, Source: contract.EventSourceExecutor, Stage: "develop"},
+	TaskResumed:   {EventType: contract.EventTypeTaskResumed, Source: contract.EventSourceExecutor, Stage: "develop"},
+	TaskSkipped:   {EventType: contract.EventTypeTaskSkipped, Source: contract.EventSourceExecutor, Stage: "develop"},
 }
 
 func EventMappingForTaskUpdate(updateType UpdateType) (TaskUpdateEvent, bool) {

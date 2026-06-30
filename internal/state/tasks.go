@@ -156,6 +156,160 @@ func (s *Store) UpdateNexdevTaskStatus(ctx context.Context, taskID, status strin
 	return updateOne(ctx, s.db, `UPDATE nexdev_tasks SET status = ?, updated_at = ? WHERE id = ?`, status, formatTime(time.Now().UTC()), taskID)
 }
 
+// InsertNexdevTasksAfter inserts tasks immediately after triggerTaskID in the
+// trigger task's plan version. Later tasks are shifted in stable relative order.
+func (s *Store) InsertNexdevTasksAfter(ctx context.Context, triggerTaskID string, tasks []*NexdevTask) ([]*NexdevTask, error) {
+	if triggerTaskID == "" {
+		return nil, fmt.Errorf("trigger task id is required")
+	}
+	if len(tasks) == 0 {
+		return nil, fmt.Errorf("at least one task is required")
+	}
+
+	prepared := make([]*NexdevTask, 0, len(tasks))
+	seen := map[string]bool{}
+	now := time.Now().UTC()
+	for _, task := range tasks {
+		if task == nil {
+			return nil, fmt.Errorf("task is required")
+		}
+		copyTask := *task
+		if err := validateNexdevTaskForInsert(&copyTask); err != nil {
+			return nil, err
+		}
+		if seen[copyTask.Spec.ID] {
+			return nil, fmt.Errorf("duplicate task id: %s", copyTask.Spec.ID)
+		}
+		seen[copyTask.Spec.ID] = true
+		if copyTask.Status == "" {
+			copyTask.Status = NexdevTaskStatusPending
+		}
+		if copyTask.CreatedAt.IsZero() {
+			copyTask.CreatedAt = now
+		} else {
+			copyTask.CreatedAt = copyTask.CreatedAt.UTC()
+		}
+		if copyTask.UpdatedAt.IsZero() {
+			copyTask.UpdatedAt = copyTask.CreatedAt
+		} else {
+			copyTask.UpdatedAt = copyTask.UpdatedAt.UTC()
+		}
+		prepared = append(prepared, &copyTask)
+	}
+
+	return prepared, executeWithRetryContext(ctx, s.db, 25, 5, func(tx *sql.Tx) error {
+		trigger, err := scanNexdevTask(tx.QueryRowContext(ctx, selectNexdevTaskSQL()+` WHERE id = ?`, triggerTaskID))
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("trigger task not found: %s", triggerTaskID)
+		}
+		if err != nil {
+			return err
+		}
+
+		for _, task := range prepared {
+			if task.ProjectID == "" {
+				task.ProjectID = trigger.ProjectID
+			}
+			if task.RunID == "" {
+				task.RunID = trigger.RunID
+			}
+			if task.PlanVersion == 0 {
+				task.PlanVersion = trigger.PlanVersion
+			}
+			if task.ProjectID != trigger.ProjectID || task.RunID != trigger.RunID || task.PlanVersion != trigger.PlanVersion {
+				return fmt.Errorf("task %s must match trigger project, run, and plan version", task.Spec.ID)
+			}
+		}
+
+		affectedRows, err := tx.QueryContext(ctx, `SELECT id, plan_order FROM nexdev_tasks WHERE run_id = ? AND plan_version = ? AND plan_order > ? ORDER BY plan_order DESC, id DESC`, trigger.RunID, trigger.PlanVersion, trigger.PlanOrder)
+		if err != nil {
+			return fmt.Errorf("failed to list tasks to shift: %w", err)
+		}
+		type shiftedTask struct {
+			id    string
+			order int
+		}
+		var shifted []shiftedTask
+		for affectedRows.Next() {
+			var task shiftedTask
+			if err := affectedRows.Scan(&task.id, &task.order); err != nil {
+				affectedRows.Close()
+				return err
+			}
+			shifted = append(shifted, task)
+		}
+		if err := affectedRows.Close(); err != nil {
+			return err
+		}
+		if err := affectedRows.Err(); err != nil {
+			return fmt.Errorf("failed to read tasks to shift: %w", err)
+		}
+
+		updatedAt := formatTime(now)
+		for _, task := range shifted {
+			if _, err := tx.ExecContext(ctx, `UPDATE nexdev_tasks SET plan_order = ?, updated_at = ? WHERE id = ?`, task.order+len(prepared), updatedAt, task.id); err != nil {
+				return fmt.Errorf("failed to shift task %s: %w", task.id, err)
+			}
+		}
+
+		for i, task := range prepared {
+			task.PlanOrder = trigger.PlanOrder + i + 1
+			jsonFields, err := marshalTaskJSONFields(task.Spec)
+			if err != nil {
+				return err
+			}
+			for _, dependencyID := range task.Spec.Dependencies {
+				if dependencyID == task.Spec.ID {
+					return fmt.Errorf("task %s cannot depend on itself", task.Spec.ID)
+				}
+				var exists int
+				if err := tx.QueryRowContext(ctx, `SELECT 1 FROM nexdev_tasks WHERE id = ? AND run_id = ?`, dependencyID, task.RunID).Scan(&exists); err != nil {
+					if err == sql.ErrNoRows {
+						return fmt.Errorf("task dependency not found: %s", dependencyID)
+					}
+					return fmt.Errorf("failed to validate task dependency %s: %w", dependencyID, err)
+				}
+			}
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO nexdev_tasks (
+					id, project_id, run_id, phase_id, title, description, expected_files_json,
+					dependencies_json, acceptance_criteria_json, test_commands_json, risk_level,
+					required_tools_json, notes_json, status, plan_version, plan_order, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, task.Spec.ID, task.ProjectID, task.RunID, task.Spec.PhaseID, task.Spec.Title, task.Spec.Description,
+				jsonFields.expectedFiles, jsonFields.dependencies, jsonFields.acceptanceCriteria, jsonFields.testCommands,
+				task.Spec.RiskLevel, jsonFields.requiredTools, jsonFields.notes, task.Status, task.PlanVersion,
+				task.PlanOrder, formatTime(task.CreatedAt), formatTime(task.UpdatedAt))
+			if err != nil {
+				return fmt.Errorf("failed to create Nexdev task: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func validateNexdevTaskForInsert(task *NexdevTask) error {
+	if task == nil {
+		return fmt.Errorf("task is required")
+	}
+	if task.Spec.ID == "" {
+		return fmt.Errorf("task id is required")
+	}
+	if task.Spec.PhaseID == "" {
+		return fmt.Errorf("phase id is required")
+	}
+	if task.Spec.Title == "" {
+		return fmt.Errorf("task title is required")
+	}
+	if len(task.Spec.AcceptanceCriteria) == 0 {
+		return fmt.Errorf("task acceptance criteria are required")
+	}
+	if task.PlanOrder < 0 {
+		return fmt.Errorf("task plan order must be >= 0")
+	}
+	return nil
+}
+
 type taskJSONFields struct {
 	expectedFiles      string
 	dependencies       string

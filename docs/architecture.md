@@ -127,6 +127,27 @@ M6/M7 follow-ups:
 - App/CLI/control-plane wiring must acquire the project lock before invoking mutating runner paths.
 - State follow-up should add typed repositories for `hivemind_results` and `validate_results`; this task only writes/indexes artifacts because state ownership was out of scope.
 
+Current M7 planning behavior:
+- `internal/pipeline.PlanSketchStage` is provider-backed through `provider.StructuredClient` and `provider.SlotPlanSketch`. It consumes supplied interview, repo analysis, complexity, validated design, and validation report inputs; validates that validation passed or warned; canonicalizes phase IDs/numbers by provider array order; deduplicates similar phase titles; and writes `.nexdev/artifacts/devplan.json` with phase sketches only.
+- `internal/pipeline.PlanDetailStage` is provider-backed through `provider.StructuredClient` and `provider.SlotPlanDetail`. It consumes supplied phase sketches, asks for `contract.TaskSpec` rows, validates task acceptance criteria, write-task expected files, dependency references, and dependency cycles, then writes `.nexdev/artifacts/devplan.json`, `.nexdev/artifacts/devplan.md`, and one `phaseNNN.md` artifact per phase.
+- After validation, detailed tasks are persisted to `nexdev_tasks` with stable `plan_version`, `plan_order`, and pending status. `internal/pipeline.ReviewStage` and `ReviewService` now gate those pending tasks before develop: manual mode blocks with `review_required` until an approval service call writes the deterministic `.nexdev/artifacts/review_approval.json` marker, auto mode locally approves the validated pending plan, CI mode rejects high/critical-risk tasks without test commands, and skip mode approves only when explicitly allowed by config/caller.
+- Review edits operate over the latest persisted pending plan version. Task updates and deletes validate the resulting plan, increment `plan_version`, and write `plan_edit_events`; non-pending tasks are rejected. Because the state schema has no approved column, develop prerequisite wiring should use the review approval artifact/stage output marker `reviewed_approved_plan` instead of treating pre-review pending tasks as approved.
+
+Current M8 develop/executor behavior:
+- `internal/pipeline.DevelopStage` implements the canonical `develop` stage and refuses to run until `.nexdev/artifacts/review_approval.json` contains an approved `reviewed_approved_plan` marker. Pending tasks alone are not sufficient and are left untouched when the marker is absent.
+- `internal/executor.NexdevExecutor` is an additive Nexdev bridge over `nexdev_tasks`, `nexdev_blockers`, and the persisted event log. It lists pending/pending-after-detour tasks, updates task status, maps task updates to the required task event family, creates blockers on structured worker blockers, and returns `TaskReport` values.
+- The default test/CI worker path is deterministic `FakeWorker`. It can emit progress, complete tasks, report blockers, and write only task-expected files after `internal/safety.PathSanitizer` validation. Shell and network execution are not implemented.
+- Basic in-process controls exist for pause, resume, cancel, skip, current task, and steering ingestion. Steering is persisted and included in prompt context as last-N messages plus summary, but it cannot override safety policy or acceptance criteria.
+- Real LLM code execution, shell tools, control-plane handlers, project-lock wiring, and full steering prompt context from requirements/design/repo artifacts remain follow-up work.
+
+Current M9 detour behavior:
+- `internal/detour.WorkflowManager` is the Nexdev first-class detour workflow beside the legacy imported `detour.Manager`. It captures the trigger task, open blocker ID when available, neighboring tasks, phase, design-summary/artifact placeholder, repo context, source, reason, and current depth into `RequestContext` before generation.
+- Detour generation uses `provider.StructuredClient` through `provider.SlotPlanDetail` because no dedicated provider slot exists yet. A later provider/config task can add a detour slot if the orchestrator wants separate model routing.
+- Generated detour tasks are validated with local M7-equivalent rules for acceptance criteria, write-task expected files, dependency references, expected-file path shape, and inserted-set cycles. Splicing detects ID conflicts before persistence.
+- Max depth defaults to `3`. Depth exhaustion creates an open `nexdev_blockers` row with reason `detour_depth_exceeded`, marks the trigger task blocked, marks the run blocked, and returns an error rather than silently skipping.
+- Splicing persists new `nexdev_tasks` with deterministic `D<depth>.<seq>` IDs when the provider omits IDs and stable integer `plan_order` values immediately after the trigger when an order gap exists. Dense persisted plans need a state/review follow-up to shift existing task order values safely.
+- Successful detours mark the trigger task `pending_after_detour`, persist `detour_records.result_json`, and persist a `detour_created` event. Control-plane route/UI and automatic develop resume remain M10/M12 integration work.
+
 ## 6. State Flow
 
 SQLite is the durable source of truth for:

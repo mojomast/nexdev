@@ -375,6 +375,9 @@ Current fixture test command:
 - Cycles fail.
 - Manual edit writes `plan_edit_events` and increments plan version.
 - Reviewed tasks persist through `nexdev_tasks` after plan validation; repository tests cover dependency references, but M7 remains responsible for cycle detection and plan mutation/version semantics.
+- Current M7 planning coverage: `go test ./internal/pipeline` covers provider-backed `plan_sketch` through `provider.SlotPlanSketch`, deterministic phase numbering and deduplication, invalid structured-output repair, provider-backed `plan_detail` through `provider.SlotPlanDetail`, task validation failures for acceptance criteria/expected files/missing dependencies, dependency cycle rejection, deterministic `devplan.json`/`devplan.md`/`phaseNNN.md` rendering, artifact indexing, pending `nexdev_tasks` persistence with stable plan version/order, and `PipelineStage`/`StageOutputter` resume/output behavior.
+- Current M7 review coverage: `go test ./internal/pipeline` covers manual `review_required` blocking, approval marker artifact/stage output for develop prerequisites, auto approval, CI rejection for high-risk tasks without tests, skip mode requiring explicit allowance, task update version increment with `plan_edit_events`, delete-pending-task version increment with dependency safety, non-pending edit rejection, and `PipelineStage`/`StageOutputter` resume behavior.
+- Remaining review coverage: control-plane and TUI clients must call the same review service path for edits/approval, emit `review_required`, `review_completed`, and `plan_updated` events after persistence, and enforce roles once M10/M12 own those surfaces.
 
 ### Executor and Steering
 
@@ -384,6 +387,8 @@ Current fixture test command:
 - Steering cannot override safety policy.
 - Pause/resume/cancel are context-aware.
 - Executor integration loads `nexdev_tasks`, updates task status through the state repository, and writes blockers to `nexdev_blockers` rather than legacy geoffrussy task/blocker tables.
+- Current M8 coverage: `go test ./internal/executor ./internal/pipeline` covers fake task completion with persisted status/events, expected-file write allowance, unexpected write rejection, task-blocker event mapping plus `nexdev_blockers` creation, pause/resume/skip/cancel/current-task behavior, steering persistence into prompt context, and develop-stage review approval marker enforcement.
+- Remaining executor coverage: richer steering context assembled from requirements/design/repo artifacts, control-plane handler integration, project-lock lifecycle wiring, real worker/worktree strategy tests, shell/network policy enforcement if those tools are later implemented, and changed-file manifest/report population.
 
 ### Detour
 
@@ -392,6 +397,9 @@ Current fixture test command:
 - Tasks splice after trigger task.
 - Depth exceeded creates blocker and pauses.
 - Detour integration uses `nexdev_blockers` and `nexdev_tasks`; repository tests cover persistence only, while M9 owns task splice/depth policy behavior.
+- Current M9 coverage: `go test ./internal/detour` covers blocker-triggered requests from `nexdev_blockers`, structured fake-provider generation and repair, M7-equivalent task validation, immediate splice ordering after the trigger for gapped and dense plans, ID conflict detection, `detour_records` persistence, `detour_created` event persistence, trigger `pending_after_detour` status, and depth-exceeded blocker/no-silent-skip behavior.
+- Current dense-order state coverage: `go test ./internal/state` covers transactional insertion after a trigger task in a dense plan, multiple inserted detour tasks, shifted later task orders with stable relative order, dependency validation across inserted tasks, and stable plan version metadata.
+- Remaining detour coverage: M10/M12 should cover HTTP/CLI/TUI adapters, role checks, operator approval policy if enabled, and automatic resume if assigned.
 
 ### Control Plane and Auth
 
