@@ -59,6 +59,7 @@ type verifyReport struct {
 type verifyCommandResult struct {
 	Command         string `json:"command"`
 	Passed          bool   `json:"passed"`
+	PolicyDenied    bool   `json:"policy_denied"`
 	ExitCode        int    `json:"exit_code"`
 	TimedOut        bool   `json:"timed_out"`
 	Attempts        int    `json:"attempts"`
@@ -210,7 +211,7 @@ func (s *VerifyStage) runCommandWithRepairs(ctx context.Context, env StageEnv, c
 		result = s.runCommandOnce(ctx, command, deadline)
 		result.Attempts = attempt
 		_ = persistVerifyEvent(ctx, env, contract.EventTypeVerifyCommandOutput, fmt.Sprintf("command_%d_attempt_%d", commandIndex, attempt), map[string]any{"command": command, "attempt": attempt, "passed": result.Passed, "timed_out": result.TimedOut, "output_truncated": result.OutputTruncated})
-		if result.Passed || attempt == maxAttempts || result.TimedOut {
+		if result.Passed || result.PolicyDenied || attempt == maxAttempts || result.TimedOut {
 			return result
 		}
 		repair := VerifyRepairAttempt{Command: command, Attempt: attempt, Reason: "verification command failed", At: s.now().Format(time.RFC3339Nano)}
@@ -231,6 +232,7 @@ func (s *VerifyStage) runCommandOnce(ctx context.Context, command string, deadli
 	decision := s.policy().AuthorizeShellCommand(command)
 	if !decision.Allowed {
 		sum := sha256.Sum256([]byte("policy-denied:" + command))
+		result.PolicyDenied = true
 		result.ExitCode = 126
 		result.StderrTail = decision.Reason
 		result.OutputSHA256 = hex.EncodeToString(sum[:])
