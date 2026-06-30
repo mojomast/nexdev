@@ -66,7 +66,7 @@ Additional recommended commands:
 
 Recommended commands must not be documented as valid until their files exist.
 
-`govulncheck` is a required release gate, but it is an external tool availability requirement rather than product behavior. Install it before running the gate, for example with `go install golang.org/x/vuln/cmd/govulncheck@latest`, and ensure the install directory is on `PATH`. If unavailable in a worker environment, record the exact skip reason as a release-gate environment issue.
+`govulncheck` is a required release gate, but it is an external tool availability requirement rather than product behavior. Install it before running the gate, for example with `go install golang.org/x/vuln/cmd/govulncheck@latest`, and ensure the install directory, commonly `$HOME/go/bin`, is on `PATH`. Release checks use the fixed module-pinned Go toolchain `go1.25.11`; do not suppress vulnerabilities or skip this gate.
 
 ## 3. Test Layers
 
@@ -519,6 +519,6 @@ Release gate:
 - Spec coverage complete.
 
 Known remaining release-gate gaps after M17:
-- `govulncheck` must be installed and runnable in the release environment.
+- `govulncheck` must be installed and runnable in the release environment with the fixed module-pinned Go toolchain.
 - Real-provider smoke remains optional, credential-gated, and excluded from normal CI.
 - Broader hostile security fixture coverage, OpenAPI generated-code drift checks, and standalone verify/handoff command smoke remain release follow-up work.

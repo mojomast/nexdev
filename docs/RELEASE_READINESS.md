@@ -1,6 +1,6 @@
 # M19 Release Readiness Handoff
 
-Status: M19 release readiness is blocked on release environment readiness because `govulncheck` is unavailable on `PATH` in this worker environment.
+Status: M19 toolchain vulnerability deblocking updated the module, CI, and release workflow to use the fixed Go toolchain `go1.25.11`. Final release readiness still depends on the full gate passing in the prepared release environment.
 
 ## Commands Run In M19 Worker Environment
 
@@ -11,8 +11,8 @@ Status: M19 release readiness is blocked on release environment readiness becaus
 - `go vet ./...` passed.
 - `go mod verify` passed.
 - `./scripts/e2e_fake_provider.sh` passed.
-- `./scripts/release_check.sh` passed contract tests, full tests, race tests, vet, and module verification, then failed at missing `govulncheck`.
-- `govulncheck ./...` was not run because `govulncheck` is not installed.
+- Earlier M19 runs blocked because `govulncheck` was unavailable on `PATH`; the tool is now expected to be installed in the release environment, for example under `$HOME/go/bin` after `go install`.
+- The module and CI/release workflows now require Go `1.25.11` through `go.mod` and GitHub Actions setup-go pins.
 
 ## Required Gates
 
@@ -23,7 +23,7 @@ Status: M19 release readiness is blocked on release environment readiness becaus
 - `govulncheck ./...`
 - `./scripts/e2e_fake_provider.sh`
 
-Use `./scripts/release_check.sh` to run the local release gate. If `govulncheck` is not installed, release readiness is blocked by the release environment, not by product runtime behavior.
+Use `./scripts/release_check.sh` to run the local release gate. If `govulncheck` is installed under `$HOME/go/bin`, run with `PATH="$HOME/go/bin:$PATH" ./scripts/release_check.sh` or otherwise ensure its install directory is on `PATH`.
 
 ## Optional Gates
 
@@ -31,7 +31,7 @@ Use `./scripts/release_check.sh` to run the local release gate. If `govulncheck`
 
 ## Known Release Blockers Or Follow-Ups
 
-- Release blocker: `govulncheck` must be available in the release environment and pass. Exact local error: `govulncheck not found on PATH`; `scripts/release_check.sh` exits `127` with `ERROR: govulncheck is required for release readiness but is not on PATH.`
+- Release gate: `govulncheck` must remain enabled and pass under the fixed Go toolchain. Do not suppress vulnerabilities or skip the gate.
 - Generated OpenAPI server types are still deferred; current release checks use route/role contract tests instead of generated-code drift.
 - Policy-gated real verification command execution, output caps, controlled env, and repair loop remain unimplemented beyond current denied-command reporting.
 - Standalone local `nexdev verify` and artifact content opening remain deferred command behavior.

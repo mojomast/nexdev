@@ -2,7 +2,7 @@ module github.com/mojomast/nexdev
 
 go 1.24.2
 
-toolchain go1.24.4
+toolchain go1.25.11
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0

@@ -43,6 +43,6 @@ Do not place provider keys, bearer tokens, `.env` values, private keys, or spend
 
 ## Release Gate Environment
 
-`govulncheck` is required for release readiness as a supply-chain gate. Its availability is an environment requirement; Nexdev does not implement vulnerability scanning as product runtime behavior.
+`govulncheck` is required for release readiness as a supply-chain gate. Nexdev pins the fixed release toolchain in `go.mod` with `toolchain go1.25.11`; CI and release workflows must use the same fixed Go version. `govulncheck` availability is an environment requirement; Nexdev does not implement vulnerability scanning as product runtime behavior.
 
-Run `./scripts/release_check.sh` in a prepared release environment. The script fails if `govulncheck` is unavailable and never runs real-provider smoke unless that separate opt-in script is invoked with explicit credentials and spend gates.
+Run `./scripts/release_check.sh` in a prepared release environment. If `govulncheck` was installed with `go install`, ensure `$HOME/go/bin` or the relevant Go install directory is on `PATH`. The script fails if `govulncheck` is unavailable and never runs real-provider smoke unless that separate opt-in script is invoked with explicit credentials and spend gates.

@@ -2699,11 +2699,11 @@ Acceptance criteria:
 
 ### M19. Release Readiness
 
-Status: blocked by M19-RELEASE-READINESS on 2026-06-30 because `govulncheck` is not installed on `PATH` in the worker environment. Added local release gate script, Nexdev CI/release workflow updates, release operations/handoff docs, and package-level slow-client publisher overflow coverage. Full gate execution, including a successful `govulncheck ./...`, is still required before M19 can be accepted.
+Status: M19 toolchain vulnerability deblock in progress on 2026-06-30. The module and release configuration now require fixed toolchain `go1.25.11` for deterministic `govulncheck` release gates. Full gate execution, including a successful `govulncheck ./...`, remains required before M19 can be accepted.
 
 Evidence added:
 - `scripts/release_check.sh` runs OpenAPI/control-plane contract tests, `go test ./...`, `go test -race ./...`, `go vet ./...`, `go mod verify`, `govulncheck ./...` when installed, and `./scripts/e2e_fake_provider.sh` without running real-provider smoke.
-- `.github/workflows/ci.yml` and `.github/workflows/release.yml` now target Go 1.24.4 and `cmd/nexdev` instead of geoffrussy-era binaries.
+- `.github/workflows/ci.yml` and `.github/workflows/release.yml` now target Go 1.25.11 and `cmd/nexdev` instead of geoffrussy-era binaries.
 - `internal/controlplane` adds slow-client publisher overflow coverage for bounded subscriber queues.
 - `docs/OPERATING.md` and `docs/RELEASE_READINESS.md` record release gate commands, optional real-provider smoke gates, OpenAPI drift status, and release blockers/follow-ups.
 
