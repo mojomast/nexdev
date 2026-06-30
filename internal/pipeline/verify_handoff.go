@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -334,6 +335,29 @@ type HandoffStage struct {
 	now    func() time.Time
 }
 
+type runSummaryArtifact struct {
+	ProjectID     string                    `json:"project_id"`
+	RunID         string                    `json:"run_id"`
+	Status        string                    `json:"status"`
+	Stages        []contract.StageSummary   `json:"stages"`
+	TotalCostUSD  *float64                  `json:"total_cost_usd,omitempty"`
+	ProviderUsage []runSummaryProviderUsage `json:"provider_usage,omitempty"`
+	StartedAt     string                    `json:"started_at"`
+	CompletedAt   string                    `json:"completed_at,omitempty"`
+	OpenRisks     []string                  `json:"open_risks,omitempty"`
+	ChangedFiles  []contract.ChangedFile    `json:"changed_files,omitempty"`
+}
+
+type runSummaryProviderUsage struct {
+	Provider         string  `json:"provider"`
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	CallCount        int     `json:"call_count"`
+	AverageLatencyMS float64 `json:"average_latency_ms"`
+	TotalCostUSD     float64 `json:"total_cost_usd"`
+}
+
 func NewHandoffStage(cfg HandoffStageConfig) *HandoffStage {
 	return &HandoffStage{config: cfg, now: normalizeStageClock(cfg.Now)}
 }
@@ -375,7 +399,7 @@ func (s *HandoffStage) Run(ctx context.Context, env StageEnv) error {
 	if err != nil {
 		return err
 	}
-	summary := contract.RunSummary{ProjectID: env.Project.ProjectID(), RunID: env.Run.RunID(), Status: run.Status, StartedAt: run.StartedAt.UTC().Format(time.RFC3339Nano), ChangedFiles: changed}
+	summary := runSummaryArtifact{ProjectID: env.Project.ProjectID(), RunID: env.Run.RunID(), Status: run.Status, StartedAt: run.StartedAt.UTC().Format(time.RFC3339Nano), ChangedFiles: changed}
 	if run.CompletedAt != nil {
 		summary.CompletedAt = run.CompletedAt.UTC().Format(time.RFC3339Nano)
 	}
@@ -388,6 +412,25 @@ func (s *HandoffStage) Run(ctx context.Context, env StageEnv) error {
 			item.CompletedAt = stage.CompletedAt.UTC().Format(time.RFC3339Nano)
 		}
 		summary.Stages = append(summary.Stages, item)
+	}
+	costSummary, err := store.SummarizeCostForRun(ctx, env.Run.RunID())
+	if err != nil {
+		return err
+	}
+	if len(costSummary.Providers) > 0 {
+		totalCost := costSummary.TotalCostUSD
+		summary.TotalCostUSD = &totalCost
+		for _, provider := range costSummary.Providers {
+			summary.ProviderUsage = append(summary.ProviderUsage, runSummaryProviderUsage{
+				Provider:         safety.RedactSecrets(provider.Provider),
+				InputTokens:      provider.InputTokens,
+				OutputTokens:     provider.OutputTokens,
+				TotalTokens:      provider.TotalTokens,
+				CallCount:        provider.CallCount,
+				AverageLatencyMS: roundFloat(provider.AverageLatencyMS, 3),
+				TotalCostUSD:     provider.TotalCostUSD,
+			})
+		}
 	}
 	if err := writeStageArtifact(ctx, env, s.projectRoot(), runSummaryArtifactRelPath, contract.ArtifactKindRunSummary, StageHandoff, summary, s.now); err != nil {
 		return err
@@ -513,7 +556,7 @@ func persistVerifyEvent(ctx context.Context, env StageEnv, eventType, suffix str
 	return err
 }
 
-func renderHandoffMarkdown(request string, summary contract.RunSummary, changed []contract.ChangedFile) string {
+func renderHandoffMarkdown(request string, summary runSummaryArtifact, changed []contract.ChangedFile) string {
 	var b strings.Builder
 	b.WriteString("# Nexdev Handoff\n\n")
 	b.WriteString("## Request\n")
@@ -536,6 +579,18 @@ func renderHandoffMarkdown(request string, summary contract.RunSummary, changed 
 	}
 	b.WriteString("\n## Verification\n- Fake-provider E2E verify stage completed without executing shell or network commands.\n\n## Open Risks\n- Real provider and policy-gated shell verification remain opt-in/follow-up.\n")
 	return b.String()
+}
+
+func roundFloat(value float64, precision int) float64 {
+	if precision < 0 {
+		return value
+	}
+	formatted := strconv.FormatFloat(value, 'f', precision, 64)
+	rounded, err := strconv.ParseFloat(formatted, 64)
+	if err != nil {
+		return value
+	}
+	return rounded
 }
 
 var _ PipelineStage = (*VerifyStage)(nil)

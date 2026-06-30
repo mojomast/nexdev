@@ -55,6 +55,12 @@ var (
 	authTokenTTL  = "30d"
 )
 
+var (
+	initName          string
+	initDescription   string
+	initImportDevussy string
+)
+
 var authTokenCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create an opaque bearer token",
@@ -282,7 +288,58 @@ var doctorCmd = &cobra.Command{
 	},
 }
 
+var configPrintCmd = &cobra.Command{Use: "print", Short: "Print resolved Nexdev config", RunE: func(cmd *cobra.Command, args []string) error {
+	rt, err := app.OpenRuntime(cmd.Context(), appOptions(), false)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	return printValue(cmd, rt.Config)
+}}
+
+var configValidateCmd = &cobra.Command{Use: "validate", Short: "Validate Nexdev config", RunE: func(cmd *cobra.Command, args []string) error {
+	rt, err := app.OpenRuntime(cmd.Context(), appOptions(), false)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	return printValue(cmd, map[string]any{"ok": true, "project_id": rt.ProjectID})
+}}
+
+var configSetCmd = &cobra.Command{Use: "set KEY VALUE", Short: "Set Nexdev config", Args: cobra.ExactArgs(2), RunE: notYetImplemented("config set")}
+
 func init() {
+	initCmd.Short = "Initialize Nexdev state in the current project"
+	initCmd.Long = "Initialize Nexdev project-local runtime state."
+	initCmd.RunE = runNexdevInit
+	initCmd.Flags().StringVar(&initName, "name", "", "project name")
+	initCmd.Flags().StringVar(&initDescription, "description", "", "project description")
+	initCmd.Flags().StringVar(&initImportDevussy, "import-devussy", "", "import devussy artifacts from path")
+
+	developCmd.Short = "Run pending approved development tasks"
+	developCmd.RunE = notYetImplemented("develop")
+	statusCmd.Short = "Display Nexdev project status"
+	statusCmd.RunE = func(cmd *cobra.Command, args []string) error { return localRead(cmd, "/status") }
+	planCmd.Short = "Display Nexdev plan"
+	planCmd.RunE = func(cmd *cobra.Command, args []string) error { return localRead(cmd, "/plan") }
+	reviewCmd.Short = "Review the current Nexdev plan"
+	reviewCmd.RunE = notYetImplemented("review")
+	navigateCmd.Use = "navigate STAGE"
+	navigateCmd.Short = "Navigate to a Nexdev pipeline stage"
+	navigateCmd.Args = cobra.ExactArgs(1)
+	navigateCmd.RunE = notYetImplemented("navigate")
+	resumeCmd.Short = "Resume a Nexdev run"
+	resumeCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if controlURL != "" {
+			return controlPost(cmd, "/resume", map[string]any{})
+		}
+		return notYetImplemented("local resume")(cmd, args)
+	}
+	configCmd.Short = "Manage Nexdev configuration"
+	configCmd.Long = "Manage Nexdev configuration."
+	configCmd.RunE = func(cmd *cobra.Command, args []string) error { return cmd.Help() }
+	configCmd.AddCommand(configPrintCmd, configValidateCmd, configSetCmd)
+
 	runCmd.Flags().StringVar(&runFromStage, "from", "", "start from stage")
 	runCmd.Flags().StringVar(&runStage, "stage", "", "run a single stage")
 	runCmd.Flags().BoolVar(&runYes, "yes", false, "assume conservative defaults")
@@ -301,6 +358,31 @@ func init() {
 	blockersCmd.AddCommand(blockersListCmd, blockersResolveCmd)
 	providerCmd.AddCommand(providerListCmd, providerTestCmd)
 	artifactsCmd.AddCommand(artifactsListCmd, artifactsOpenCmd)
+}
+
+func runNexdevInit(cmd *cobra.Command, args []string) error {
+	if strings.TrimSpace(initImportDevussy) != "" {
+		return fmt.Errorf("not yet implemented: init --import-devussy")
+	}
+	rt, err := app.OpenRuntime(cmd.Context(), appOptions(), false)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	out := map[string]any{"ok": true, "project_id": rt.ProjectID, "state_dir": rt.StateDir}
+	if initName != "" {
+		out["name"] = initName
+	}
+	if initDescription != "" {
+		out["description"] = initDescription
+	}
+	return printValue(cmd, out)
+}
+
+func notYetImplemented(feature string) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		return fmt.Errorf("not yet implemented: %s", feature)
+	}
 }
 
 func appOptions() app.Options {

@@ -11,7 +11,7 @@ import (
 )
 
 func TestM12CommandTreeIncludesServeAuthAndControlCommands(t *testing.T) {
-	want := []string{"run", "tui", "verify", "history", "serve", "auth", "events", "detour", "steer", "pause", "resume", "cancel", "blockers", "provider", "artifacts", "doctor"}
+	want := []string{"init", "run", "develop", "verify", "status", "plan", "review", "navigate", "detour", "steer", "pause", "resume", "cancel", "blockers", "provider", "events", "artifacts", "history", "config", "auth", "serve", "doctor"}
 	for _, name := range want {
 		if _, _, err := rootCmd.Find([]string{name}); err != nil {
 			t.Fatalf("command %q not registered: %v", name, err)
@@ -19,6 +19,59 @@ func TestM12CommandTreeIncludesServeAuthAndControlCommands(t *testing.T) {
 	}
 	if rootCmd.Use != "nexdev" {
 		t.Fatalf("root use = %q", rootCmd.Use)
+	}
+	legacy := []string{"interview", "design", "validate", "stats", "quota", "checkpoint", "rollback", "mcp-server", "tui", "version"}
+	for _, name := range legacy {
+		if cmd, _, err := rootCmd.Find([]string{name}); err == nil && cmd != nil && cmd.Name() == name {
+			t.Fatalf("legacy command %q is still reachable", name)
+		}
+	}
+}
+
+func TestRootHelpShowsOnlySpecCommandsAndNoGeoffrussyState(t *testing.T) {
+	oldJSON := jsonOutput
+	defer func() { jsonOutput = oldJSON }()
+	jsonOutput = true
+
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+	rootCmd.SetArgs([]string{"--help"})
+	defer rootCmd.SetArgs(nil)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	help := out.String()
+	want := []string{"init", "run", "develop", "verify", "status", "plan", "review", "navigate", "detour", "steer", "pause", "resume", "cancel", "blockers", "provider", "events", "artifacts", "history", "config", "auth", "serve", "doctor"}
+	for _, name := range want {
+		if !strings.Contains(help, "  "+name) {
+			t.Fatalf("help missing spec command %q:\n%s", name, help)
+		}
+	}
+	mustNotContain := []string{"interview", "design", "validate", "stats", "quota", "checkpoint", "rollback", "mcp-server", "tui", "version", ".geoffrussy", "geoffrussy"}
+	for _, text := range mustNotContain {
+		if strings.Contains(help, text) {
+			t.Fatalf("help contains legacy text %q:\n%s", text, help)
+		}
+	}
+}
+
+func TestRootWithoutSubcommandDoesNotProbeGeoffrussyState(t *testing.T) {
+	oldJSON := jsonOutput
+	defer func() { jsonOutput = oldJSON }()
+	jsonOutput = true
+
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+	rootCmd.SetArgs(nil)
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	output := out.String()
+	if strings.Contains(output, ".geoffrussy") || strings.Contains(output, "geoffrussy") {
+		t.Fatalf("root command output contains legacy state reference:\n%s", output)
 	}
 }
 

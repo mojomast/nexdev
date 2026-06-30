@@ -40,6 +40,10 @@ func TestVerifyAndHandoffStagesWriteArtifacts(t *testing.T) {
 	if countEvents(events, contract.EventTypeVerifyStarted) != 1 || countEvents(events, contract.EventTypeVerifyCompleted) != 1 {
 		t.Fatalf("verify events missing: %#v", events)
 	}
+	estimated := 0.125
+	if err := store.CreateCostRecord(ctx, &state.CostRecord{ID: "cost_handoff_1", ProjectID: env.Project.ProjectID(), RunID: env.Run.RunID(), Stage: "design", Provider: "fake token=sk-providersecret1234567890", Model: "fake-model", PromptTokens: 20, CompletionTokens: 30, TotalTokens: 50, EstimatedUSD: &estimated, LatencyMS: 150, Currency: "USD"}); err != nil {
+		t.Fatalf("CreateCostRecord failed: %v", err)
+	}
 
 	handoff := NewHandoffStage(HandoffStageConfig{ProjectRoot: root, Request: "finish token=sk-testsecret1234567890"})
 	if err := handoff.Run(ctx, env); err != nil {
@@ -49,12 +53,19 @@ func TestVerifyAndHandoffStagesWriteArtifacts(t *testing.T) {
 	if !strings.Contains(changedJSON, "develop.txt") {
 		t.Fatalf("changed files artifact missing path: %s", changedJSON)
 	}
-	var summary contract.RunSummary
+	var summary runSummaryArtifact
 	if err := json.Unmarshal(readStageArtifact(t, root, runSummaryArtifactRelPath), &summary); err != nil {
 		t.Fatalf("run summary invalid: %v", err)
 	}
 	if summary.RunID != env.Run.RunID() || len(summary.ChangedFiles) != 1 {
 		t.Fatalf("unexpected run summary: %#v", summary)
+	}
+	if summary.TotalCostUSD == nil || *summary.TotalCostUSD != estimated || len(summary.ProviderUsage) != 1 {
+		t.Fatalf("run summary missing provider usage: %#v", summary)
+	}
+	usage := summary.ProviderUsage[0]
+	if usage.InputTokens != 20 || usage.OutputTokens != 30 || usage.TotalTokens != 50 || usage.CallCount != 1 || usage.AverageLatencyMS != 150 || usage.TotalCostUSD != estimated || strings.Contains(usage.Provider, "sk-providersecret") {
+		t.Fatalf("unexpected provider usage: %#v", usage)
 	}
 	handoffMD := string(readStageArtifact(t, root, handoffArtifactRelPath))
 	if !strings.Contains(handoffMD, "develop.txt") || strings.Contains(handoffMD, "sk-testsecret") {

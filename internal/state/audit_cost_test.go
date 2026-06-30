@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -94,4 +95,56 @@ func TestStoreCostRecordsAreDurableAndRedacted(t *testing.T) {
 	if strings.Contains(string(record.Metadata), "abc.def-secret") || !strings.Contains(string(record.Metadata), "Bearer [REDACTED]") {
 		t.Fatalf("cost metadata was not redacted: %s", record.Metadata)
 	}
+}
+
+func TestStoreSummarizeCostForRunAggregatesProviders(t *testing.T) {
+	store := newEventTestStore(t)
+	seedEventRun(t, store, "proj_cost_summary", "run_cost_summary")
+	ctx := context.Background()
+	firstCost := 0.01
+	secondCost := 0.02
+	thirdCost := 0.03
+	records := []*CostRecord{
+		{ID: "cost_sum_1", ProjectID: "proj_cost_summary", RunID: "run_cost_summary", Provider: "alpha", Model: "m1", PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15, EstimatedUSD: &firstCost, LatencyMS: 100, Currency: "USD"},
+		{ID: "cost_sum_2", ProjectID: "proj_cost_summary", RunID: "run_cost_summary", Provider: "alpha", Model: "m2", PromptTokens: 30, CompletionTokens: 15, TotalTokens: 45, EstimatedUSD: &secondCost, LatencyMS: 300, Currency: "USD"},
+		{ID: "cost_sum_3", ProjectID: "proj_cost_summary", RunID: "run_cost_summary", Provider: "beta", Model: "m1", PromptTokens: 7, CompletionTokens: 8, TotalTokens: 15, EstimatedUSD: &thirdCost, LatencyMS: 50, Currency: "USD"},
+	}
+	for _, record := range records {
+		if err := store.CreateCostRecord(ctx, record); err != nil {
+			t.Fatalf("CreateCostRecord failed: %v", err)
+		}
+	}
+
+	summary, err := store.SummarizeCostForRun(ctx, "run_cost_summary")
+	if err != nil {
+		t.Fatalf("SummarizeCostForRun failed: %v", err)
+	}
+	if summary.RunID != "run_cost_summary" || len(summary.Providers) != 2 || !almostEqual(summary.TotalCostUSD, 0.06) {
+		t.Fatalf("unexpected summary: %#v", summary)
+	}
+	alpha := summary.Providers[0]
+	if alpha.Provider != "alpha" || alpha.InputTokens != 40 || alpha.OutputTokens != 20 || alpha.TotalTokens != 60 || alpha.CallCount != 2 || alpha.AverageLatencyMS != 200 || !almostEqual(alpha.TotalCostUSD, 0.03) {
+		t.Fatalf("unexpected alpha summary: %#v", alpha)
+	}
+	beta := summary.Providers[1]
+	if beta.Provider != "beta" || beta.InputTokens != 7 || beta.OutputTokens != 8 || beta.TotalTokens != 15 || beta.CallCount != 1 || beta.AverageLatencyMS != 50 || !almostEqual(beta.TotalCostUSD, 0.03) {
+		t.Fatalf("unexpected beta summary: %#v", beta)
+	}
+}
+
+func TestStoreSummarizeCostForRunZeroRows(t *testing.T) {
+	store := newEventTestStore(t)
+	seedEventRun(t, store, "proj_cost_empty", "run_cost_empty")
+
+	summary, err := store.SummarizeCostForRun(context.Background(), "run_cost_empty")
+	if err != nil {
+		t.Fatalf("SummarizeCostForRun failed: %v", err)
+	}
+	if summary.RunID != "run_cost_empty" || summary.TotalCostUSD != 0 || len(summary.Providers) != 0 {
+		t.Fatalf("expected empty summary, got %#v", summary)
+	}
+}
+
+func almostEqual(got, want float64) bool {
+	return math.Abs(got-want) < 0.0000001
 }

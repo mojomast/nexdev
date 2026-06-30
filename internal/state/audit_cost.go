@@ -24,6 +24,22 @@ type CostListOptions struct {
 	Limit     int
 }
 
+type CostSummary struct {
+	RunID        string
+	TotalCostUSD float64
+	Providers    []ProviderCostSummary
+}
+
+type ProviderCostSummary struct {
+	Provider         string
+	InputTokens      int
+	OutputTokens     int
+	TotalTokens      int
+	CallCount        int
+	AverageLatencyMS float64
+	TotalCostUSD     float64
+}
+
 func (s *Store) CreateAuditRecord(ctx context.Context, record *AuditRecord) error {
 	if record == nil {
 		return fmt.Errorf("audit record is required")
@@ -217,6 +233,48 @@ func (s *Store) ListCostRecords(ctx context.Context, opts CostListOptions) ([]*C
 		return nil, fmt.Errorf("failed to read cost records: %w", err)
 	}
 	return records, nil
+}
+
+func (s *Store) SummarizeCostForRun(ctx context.Context, runID string) (CostSummary, error) {
+	if runID == "" {
+		return CostSummary{}, fmt.Errorf("run id is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT provider,
+			SUM(prompt_tokens),
+			SUM(completion_tokens),
+			SUM(total_tokens),
+			COUNT(*),
+			AVG(latency_ms),
+			COALESCE(SUM(estimated_usd), 0)
+		FROM cost_ledger
+		WHERE run_id = ?
+		GROUP BY provider
+		ORDER BY provider ASC
+	`, runID)
+	if err != nil {
+		return CostSummary{}, fmt.Errorf("failed to summarize run cost: %w", err)
+	}
+	defer rows.Close()
+
+	summary := CostSummary{RunID: runID}
+	for rows.Next() {
+		var provider ProviderCostSummary
+		var inputTokens, outputTokens, totalTokens, callCount int64
+		if err := rows.Scan(&provider.Provider, &inputTokens, &outputTokens, &totalTokens, &callCount, &provider.AverageLatencyMS, &provider.TotalCostUSD); err != nil {
+			return CostSummary{}, fmt.Errorf("failed to scan run cost summary: %w", err)
+		}
+		provider.InputTokens = int(inputTokens)
+		provider.OutputTokens = int(outputTokens)
+		provider.TotalTokens = int(totalTokens)
+		provider.CallCount = int(callCount)
+		summary.TotalCostUSD += provider.TotalCostUSD
+		summary.Providers = append(summary.Providers, provider)
+	}
+	if err := rows.Err(); err != nil {
+		return CostSummary{}, fmt.Errorf("failed to read run cost summary: %w", err)
+	}
+	return summary, nil
 }
 
 func scanAuditRecord(scanner interface{ Scan(dest ...any) error }) (*AuditRecord, error) {
