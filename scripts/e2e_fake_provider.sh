@@ -90,6 +90,8 @@ func main() {
 
   changed := readFile(filepath.Join(repo, ".nexdev", "artifacts", "changed_files.json"))
   if !strings.Contains(changed, "generated/fake_e2e.txt") { fatal("changed_files missing generated file: %s", changed) }
+  verify := readFile(filepath.Join(repo, ".nexdev", "artifacts", "verify_report.json"))
+  if !strings.Contains(verify, `"passed": true`) { fatal("verify_report not passed: %s", verify) }
   summary := readFile(filepath.Join(repo, ".nexdev", "artifacts", "run_summary.json"))
   if !strings.Contains(summary, `"status": "completed"`) { fatal("run_summary not completed: %s", summary) }
 

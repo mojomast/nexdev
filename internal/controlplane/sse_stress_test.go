@@ -35,6 +35,7 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 		t.Fatal(err)
 	}
 	httpServer := httptest.NewServer(server.Handler())
+	client := httpServer.Client()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -44,10 +45,10 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 	fastCancels := make([]context.CancelFunc, 0, fastReaders)
 	releaseFastReaders := make(chan struct{})
 	for i := 0; i < fastReaders; i++ {
-		resp, cancelFast := openSSEStream(t, ctx, httpServer.URL, runID)
+		resp, cancelFast := openSSEStream(t, ctx, client, httpServer.URL, runID)
 		fastCancels = append(fastCancels, cancelFast)
 		wg.Add(1)
-		go func(readerID int, body io.ReadCloser) {
+		go func(body io.ReadCloser) {
 			defer wg.Done()
 			defer body.Close()
 			err := readStressEvents(ctx, body, eventCount)
@@ -58,10 +59,10 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 				case <-ctx.Done():
 				}
 			}
-		}(i, resp.Body)
+		}(resp.Body)
 	}
 
-	slowResp, slowCancel := openSSEStream(t, ctx, httpServer.URL, runID)
+	slowResp, slowCancel := openSSEStream(t, ctx, client, httpServer.URL, runID)
 	defer slowCancel()
 	defer slowResp.Body.Close()
 
@@ -112,6 +113,8 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 			t.Fatalf("slow reader ended with unexpected error: %v", err)
 		}
 	case <-time.After(5 * time.Second):
+		slowCancel()
+		_ = slowResp.Body.Close()
 		t.Fatal("slow reader connection did not terminate after queue overflow")
 	}
 
@@ -121,11 +124,12 @@ func TestSSESlowReaderStressDropsSlowClientWithoutAffectingFastReaders(t *testin
 	close(releaseFastReaders)
 	wg.Wait()
 	httpServer.Close()
+	client.CloseIdleConnections()
 
 	waitForGoroutineDelta(t, goroutinesBefore, 12)
 }
 
-func openSSEStream(t *testing.T, parent context.Context, baseURL, runID string) (*http.Response, context.CancelFunc) {
+func openSSEStream(t *testing.T, parent context.Context, client *http.Client, baseURL, runID string) (*http.Response, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(parent)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/runs/"+runID+"/stream", nil)
@@ -133,7 +137,7 @@ func openSSEStream(t *testing.T, parent context.Context, baseURL, runID string) 
 		cancel()
 		t.Fatal(err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		cancel()
 		t.Fatal(err)

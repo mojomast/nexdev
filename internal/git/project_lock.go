@@ -71,7 +71,10 @@ func AcquireProjectLockWithTimeout(ctx context.Context, projectRoot string, poll
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
-				<-timer.C
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
 			return nil, ctx.Err()
 		case <-timer.C:

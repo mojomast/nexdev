@@ -286,7 +286,13 @@ func readSSEFrames(ctx context.Context, in io.Reader, out io.Writer, jsonOutput 
 	if err := scanner.Err(); err != nil {
 		return err
 	}
-	return flush()
+	if err := flush(); err != nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	return io.ErrUnexpectedEOF
 }
 
 func WriteFollowEvent(out io.Writer, event contract.EventEnvelope, jsonOutput bool) error {

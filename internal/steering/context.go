@@ -80,11 +80,11 @@ func LoadArtifactContext(cfg ArtifactContextConfig) ([]ArtifactContext, error) {
 			budget = remaining
 		}
 		truncated := false
-		if len(text) > budget {
-			text = text[:budget]
+		if runeCount(text) > budget {
+			text = truncateRunes(text, budget)
 			truncated = true
 		}
-		remaining -= len(text)
+		remaining -= runeCount(text)
 		contexts = append(contexts, ArtifactContext{Kind: file.kind, Path: path, Text: text, Truncated: truncated})
 	}
 	return contexts, nil
@@ -96,4 +96,19 @@ func ContextFromTask(task contract.TaskSpec) TaskContext {
 		ExpectedFiles:      append([]string{}, task.ExpectedFiles...),
 		AcceptanceCriteria: append([]string{}, task.AcceptanceCriteria...),
 	}
+}
+
+func runeCount(text string) int {
+	return len([]rune(text))
+}
+
+func truncateRunes(text string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= max {
+		return text
+	}
+	return string(runes[:max])
 }

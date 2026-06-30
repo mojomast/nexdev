@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -44,20 +46,20 @@ type WriteValidationOptions struct {
 }
 
 type BasicToolPolicy struct {
-	Default string
+	Default string `yaml:"default"`
 }
 
 type FileToolPolicy struct {
-	Default string
-	Paths   []string
-	Deny    []string
+	Default string   `yaml:"default"`
+	Paths   []string `yaml:"paths"`
+	Deny    []string `yaml:"deny"`
 }
 
 type ShellToolPolicy struct {
-	Default        string
-	AllowCommands  []string
-	TimeoutSeconds int
-	OutputCapBytes int
+	Default        string   `yaml:"default"`
+	AllowCommands  []string `yaml:"allow_commands"`
+	TimeoutSeconds int      `yaml:"timeout_s"`
+	OutputCapBytes int      `yaml:"output_cap_bytes"`
 }
 
 type CommandExecutionDecision struct {
@@ -74,6 +76,46 @@ func DefaultToolPolicy() ToolPolicy {
 		Shell:     ShellToolPolicy{Default: DecisionDeny, TimeoutSeconds: 300, OutputCapBytes: 200000},
 		Network:   BasicToolPolicy{Default: DecisionDeny},
 	}
+}
+
+func LoadToolPolicyYAML(data []byte) (ToolPolicy, error) {
+	policy := DefaultToolPolicy()
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return policy, nil
+	}
+	var raw struct {
+		Tools struct {
+			ReadFile  BasicToolPolicy `yaml:"read_file"`
+			WriteFile FileToolPolicy  `yaml:"write_file"`
+			Shell     ShellToolPolicy `yaml:"shell"`
+			Network   BasicToolPolicy `yaml:"network"`
+		} `yaml:"tools"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return policy, fmt.Errorf("parse tool policy: %w", err)
+	}
+	if raw.Tools.ReadFile.Default != "" {
+		policy.ReadFile = raw.Tools.ReadFile
+	}
+	if raw.Tools.WriteFile.Default != "" || len(raw.Tools.WriteFile.Paths) > 0 || len(raw.Tools.WriteFile.Deny) > 0 {
+		policy.WriteFile = raw.Tools.WriteFile
+		if policy.WriteFile.Default == "" {
+			policy.WriteFile.Default = DecisionAllow
+		}
+		if len(policy.WriteFile.Deny) == 0 {
+			policy.WriteFile.Deny = append([]string{}, DefaultWriteDenyGlobs...)
+		}
+	}
+	if raw.Tools.Shell.Default != "" || len(raw.Tools.Shell.AllowCommands) > 0 || raw.Tools.Shell.TimeoutSeconds > 0 || raw.Tools.Shell.OutputCapBytes > 0 {
+		policy.Shell = raw.Tools.Shell
+		if policy.Shell.Default == "" {
+			policy.Shell.Default = DecisionDeny
+		}
+	}
+	if raw.Tools.Network.Default != "" {
+		policy.Network = raw.Tools.Network
+	}
+	return policy, nil
 }
 
 func (p ToolPolicy) Validate(profile string) error {

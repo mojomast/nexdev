@@ -9,14 +9,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mojomast/nexdev/internal/app"
 	"github.com/mojomast/nexdev/internal/controlplane"
+	"github.com/mojomast/nexdev/internal/pipeline"
+	"github.com/mojomast/nexdev/internal/safety"
 	"github.com/mojomast/nexdev/internal/tui"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var serveCmd = &cobra.Command{
@@ -163,7 +167,40 @@ var runCmd = &cobra.Command{
 }
 
 var verifyCmd = &cobra.Command{Use: "verify", Short: "Run verification workflow", RunE: func(cmd *cobra.Command, args []string) error {
-	return fmt.Errorf("verify command is deferred until policy-gated verify/handoff services are implemented")
+	if controlURL != "" {
+		return fmt.Errorf("remote verify is deferred until a control-plane verify route is assigned")
+	}
+	rt, err := app.OpenRuntime(cmd.Context(), appOptions(), true)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	runs, err := rt.Store.ListRunsByProject(cmd.Context(), rt.ProjectID)
+	if err != nil {
+		return err
+	}
+	if len(runs) == 0 {
+		return fmt.Errorf("verify requires an existing run")
+	}
+	verifyCfg, err := loadVerifyCommandConfig(rt.ProjectRoot)
+	if err != nil {
+		return err
+	}
+	policy, err := loadProjectToolPolicy(rt.ProjectRoot, rt.Config.Security.ToolPolicyFile)
+	if err != nil {
+		return err
+	}
+	stage := pipeline.NewVerifyStage(pipeline.VerifyStageConfig{ProjectRoot: rt.ProjectRoot, Commands: verifyCfg.Commands, Policy: policy, OutputCapBytes: verifyCfg.OutputCapBytes, TotalTimeout: time.Duration(verifyCfg.TimeoutSeconds) * time.Second, RepairAttempts: verifyCfg.RepairAttempts})
+	runID := runs[len(runs)-1].ID
+	env := pipeline.StageEnv{Project: cliProjectRef{id: rt.ProjectID}, Run: cliRunRef{id: runID}, Store: rt.Store, Config: rt.Config}
+	if err := stage.Run(cmd.Context(), env); err != nil {
+		return err
+	}
+	out, err := stage.Output(cmd.Context(), env)
+	if err != nil {
+		return err
+	}
+	return printValue(cmd, out)
 }}
 
 var historyCmd = &cobra.Command{Use: "history", Short: "Show run history", RunE: func(cmd *cobra.Command, args []string) error { return localRead(cmd, "/events") }}
@@ -409,3 +446,65 @@ func (r *responseRecorder) Write(p []byte) (int, error) {
 	}
 	return r.body.Write(p)
 }
+
+type cliVerifyConfig struct {
+	Commands       []string `yaml:"commands"`
+	TimeoutSeconds int      `yaml:"timeout_s"`
+	OutputCapBytes int      `yaml:"output_cap_bytes"`
+	RepairAttempts int      `yaml:"repair_attempts"`
+}
+
+func loadVerifyCommandConfig(root string) (cliVerifyConfig, error) {
+	cfg := cliVerifyConfig{TimeoutSeconds: 300, OutputCapBytes: 64 * 1024, RepairAttempts: 2}
+	data, err := os.ReadFile(filepath.Join(root, "nexdev.yaml"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
+		return cfg, err
+	}
+	var raw struct {
+		Verify cliVerifyConfig `yaml:"verify"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return cfg, fmt.Errorf("parse verify config: %w", err)
+	}
+	if raw.Verify.TimeoutSeconds > 0 {
+		cfg.TimeoutSeconds = raw.Verify.TimeoutSeconds
+	}
+	if raw.Verify.OutputCapBytes > 0 {
+		cfg.OutputCapBytes = raw.Verify.OutputCapBytes
+	}
+	if raw.Verify.RepairAttempts > 0 {
+		cfg.RepairAttempts = raw.Verify.RepairAttempts
+	}
+	cfg.Commands = raw.Verify.Commands
+	return cfg, nil
+}
+
+func loadProjectToolPolicy(root, policyPath string) (safety.ToolPolicy, error) {
+	if strings.TrimSpace(policyPath) == "" {
+		return safety.DefaultToolPolicy(), nil
+	}
+	if !filepath.IsAbs(policyPath) {
+		policyPath = filepath.Join(root, policyPath)
+	}
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return safety.DefaultToolPolicy(), nil
+		}
+		return safety.ToolPolicy{}, err
+	}
+	policy, err := safety.LoadToolPolicyYAML(data)
+	if err != nil {
+		return policy, err
+	}
+	return policy, policy.Validate(safety.ProfileDev)
+}
+
+type cliProjectRef struct{ id string }
+type cliRunRef struct{ id string }
+
+func (r cliProjectRef) ProjectID() string { return r.id }
+func (r cliRunRef) RunID() string         { return r.id }

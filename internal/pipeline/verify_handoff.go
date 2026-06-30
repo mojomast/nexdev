@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,19 +24,57 @@ const (
 	changedFilesArtifactRelPath = ".nexdev/artifacts/changed_files.json"
 	handoffArtifactRelPath      = ".nexdev/artifacts/handoff.md"
 	runSummaryArtifactRelPath   = ".nexdev/artifacts/run_summary.json"
+	defaultVerifyOutputCapBytes = 64 * 1024
+	defaultVerifyTimeout        = 5 * time.Minute
+	defaultVerifyRepairAttempts = 2
 )
 
 type VerifyStageConfig struct {
-	ProjectRoot string
-	Commands    []string
-	Now         func() time.Time
+	ProjectRoot    string
+	Commands       []string
+	Policy         safety.ToolPolicy
+	OutputCapBytes int
+	TotalTimeout   time.Duration
+	RepairAttempts int
+	RepairFunc     func(context.Context, VerifyRepairAttempt) error
+	Now            func() time.Time
 }
 
 type VerifyStage struct {
 	config VerifyStageConfig
-	report contract.VerifyReport
+	report verifyReport
 	wrote  bool
 	now    func() time.Time
+}
+
+type verifyReport struct {
+	Passed         bool                   `json:"passed"`
+	Commands       []verifyCommandResult  `json:"commands"`
+	ChangedFiles   []contract.ChangedFile `json:"changed_files"`
+	Failures       []contract.Finding     `json:"failures"`
+	Warnings       []contract.Finding     `json:"warnings"`
+	RepairAttempts []VerifyRepairAttempt  `json:"repair_attempts,omitempty"`
+}
+
+type verifyCommandResult struct {
+	Command         string `json:"command"`
+	Passed          bool   `json:"passed"`
+	ExitCode        int    `json:"exit_code"`
+	TimedOut        bool   `json:"timed_out"`
+	Attempts        int    `json:"attempts"`
+	OutputTruncated bool   `json:"output_truncated"`
+	StdoutTail      string `json:"stdout_tail"`
+	StderrTail      string `json:"stderr_tail"`
+	OutputSHA256    string `json:"output_sha256"`
+	StartedAt       string `json:"started_at"`
+	CompletedAt     string `json:"completed_at"`
+}
+
+type VerifyRepairAttempt struct {
+	Command string `json:"command"`
+	Attempt int    `json:"attempt"`
+	Reason  string `json:"reason"`
+	At      string `json:"at"`
 }
 
 func NewVerifyStage(cfg VerifyStageConfig) *VerifyStage {
@@ -63,31 +102,44 @@ func (s *VerifyStage) Run(ctx context.Context, env StageEnv) error {
 	if err := s.Validate(ctx, env); err != nil {
 		return err
 	}
+	if err := persistVerifyEvent(ctx, env, contract.EventTypeVerifyStarted, "started", map[string]any{"command_count": len(s.commands())}); err != nil {
+		return err
+	}
 	changed, err := detectChangedFiles(ctx, env.Store.(*state.Store), env.Run.RunID(), s.projectRoot())
 	if err != nil {
 		return err
 	}
-	now := s.now().Format(time.RFC3339Nano)
-	commands := make([]contract.CommandResult, 0, len(s.config.Commands))
-	for _, command := range s.config.Commands {
+	commands := make([]verifyCommandResult, 0, len(s.commands()))
+	repairs := []VerifyRepairAttempt{}
+	deadline := s.now().Add(s.totalTimeout())
+	passed := true
+	for commandIndex, command := range s.commands() {
 		command = strings.TrimSpace(command)
 		if command == "" {
 			continue
 		}
-		sum := sha256.Sum256([]byte("policy-denied:" + command))
-		commands = append(commands, contract.CommandResult{Command: command, ExitCode: 126, StderrTail: "command execution denied by default policy", OutputSHA256: hex.EncodeToString(sum[:]), StartedAt: now, CompletedAt: now})
+		if !s.now().Before(deadline) {
+			result := s.pendingTimedOutResult(command)
+			commands = append(commands, result)
+			passed = false
+			continue
+		}
+		result := s.runCommandWithRepairs(ctx, env, commandIndex, command, deadline, &repairs)
+		commands = append(commands, result)
+		if !result.Passed {
+			passed = false
+		}
 	}
-	report := contract.VerifyReport{Passed: len(commands) == 0, Commands: commands, ChangedFiles: changed}
-	if len(commands) > 0 {
-		report.Failures = []contract.Finding{{Severity: "medium", Title: "Verification command denied", Description: "Shell execution is denied by default policy in fake-provider E2E."}}
+	report := verifyReport{Passed: passed, Commands: commands, ChangedFiles: changed, RepairAttempts: repairs}
+	for _, command := range commands {
+		if !command.Passed {
+			report.Failures = append(report.Failures, contract.Finding{Severity: "medium", Title: "Verification command failed", Description: command.Command})
+		}
 	}
 	if err := writeStageArtifact(ctx, env, s.projectRoot(), verifyReportArtifactRelPath, contract.ArtifactKindVerifyReport, StageVerify, report, s.now); err != nil {
 		return err
 	}
-	if err := persistVerifyEvent(ctx, env, contract.EventTypeVerifyStarted, map[string]any{"command_count": len(commands)}); err != nil {
-		return err
-	}
-	if err := persistVerifyEvent(ctx, env, contract.EventTypeVerifyCompleted, map[string]any{"passed": report.Passed, "changed_file_count": len(changed)}); err != nil {
+	if err := persistVerifyEvent(ctx, env, contract.EventTypeVerifyCompleted, "completed", map[string]any{"passed": report.Passed, "changed_file_count": len(changed)}); err != nil {
 		return err
 	}
 	s.report = report
@@ -112,6 +164,160 @@ func (s *VerifyStage) projectRoot() string {
 		return "."
 	}
 	return s.config.ProjectRoot
+}
+
+func (s *VerifyStage) commands() []string { return append([]string{}, s.config.Commands...) }
+
+func (s *VerifyStage) policy() safety.ToolPolicy {
+	policy := s.config.Policy
+	if policy.Shell.Default == "" && len(policy.Shell.AllowCommands) == 0 && policy.Shell.TimeoutSeconds == 0 && policy.Shell.OutputCapBytes == 0 {
+		policy = safety.DefaultToolPolicy()
+	}
+	return policy
+}
+
+func (s *VerifyStage) outputCapBytes() int {
+	if s.config.OutputCapBytes > 0 {
+		return s.config.OutputCapBytes
+	}
+	return defaultVerifyOutputCapBytes
+}
+
+func (s *VerifyStage) totalTimeout() time.Duration {
+	if s.config.TotalTimeout > 0 {
+		return s.config.TotalTimeout
+	}
+	return defaultVerifyTimeout
+}
+
+func (s *VerifyStage) repairAttempts() int {
+	if s.config.RepairAttempts > 0 {
+		return s.config.RepairAttempts
+	}
+	return defaultVerifyRepairAttempts
+}
+
+func (s *VerifyStage) pendingTimedOutResult(command string) verifyCommandResult {
+	now := s.now().Format(time.RFC3339Nano)
+	sum := sha256.Sum256([]byte("timed-out-before-start:" + command))
+	return verifyCommandResult{Command: command, Passed: false, ExitCode: -1, TimedOut: true, Attempts: 0, StderrTail: "verify total timeout exceeded before command started", OutputSHA256: hex.EncodeToString(sum[:]), StartedAt: now, CompletedAt: now}
+}
+
+func (s *VerifyStage) runCommandWithRepairs(ctx context.Context, env StageEnv, commandIndex int, command string, deadline time.Time, repairs *[]VerifyRepairAttempt) verifyCommandResult {
+	var result verifyCommandResult
+	maxAttempts := 1 + s.repairAttempts()
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		result = s.runCommandOnce(ctx, command, deadline)
+		result.Attempts = attempt
+		_ = persistVerifyEvent(ctx, env, contract.EventTypeVerifyCommandOutput, fmt.Sprintf("command_%d_attempt_%d", commandIndex, attempt), map[string]any{"command": command, "attempt": attempt, "passed": result.Passed, "timed_out": result.TimedOut, "output_truncated": result.OutputTruncated})
+		if result.Passed || attempt == maxAttempts || result.TimedOut {
+			return result
+		}
+		repair := VerifyRepairAttempt{Command: command, Attempt: attempt, Reason: "verification command failed", At: s.now().Format(time.RFC3339Nano)}
+		*repairs = append(*repairs, repair)
+		if s.config.RepairFunc != nil {
+			if err := s.config.RepairFunc(ctx, repair); err != nil {
+				result.StderrTail = appendTail(result.StderrTail, "repair attempt failed: "+err.Error(), s.outputCapBytes())
+				return result
+			}
+		}
+	}
+	return result
+}
+
+func (s *VerifyStage) runCommandOnce(ctx context.Context, command string, deadline time.Time) verifyCommandResult {
+	started := s.now()
+	result := verifyCommandResult{Command: command, ExitCode: -1, StartedAt: started.Format(time.RFC3339Nano)}
+	decision := s.policy().AuthorizeShellCommand(command)
+	if !decision.Allowed {
+		sum := sha256.Sum256([]byte("policy-denied:" + command))
+		result.ExitCode = 126
+		result.StderrTail = decision.Reason
+		result.OutputSHA256 = hex.EncodeToString(sum[:])
+		result.CompletedAt = s.now().Format(time.RFC3339Nano)
+		return result
+	}
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		result.StderrTail = "command cannot be empty"
+		result.CompletedAt = s.now().Format(time.RFC3339Nano)
+		return result
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return s.pendingTimedOutResult(command)
+	}
+	runCtx, cancel := context.WithTimeout(ctx, remaining)
+	defer cancel()
+	stdout := &cappedOutput{cap: s.outputCapBytes()}
+	stderr := &cappedOutput{cap: s.outputCapBytes()}
+	cmd := exec.CommandContext(runCtx, parts[0], parts[1:]...)
+	cmd.Dir = s.projectRoot()
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	result.TimedOut = runCtx.Err() == context.DeadlineExceeded
+	result.StdoutTail = stdout.String()
+	result.StderrTail = stderr.String()
+	result.OutputTruncated = stdout.truncated || stderr.truncated
+	result.CompletedAt = s.now().Format(time.RFC3339Nano)
+	sum := sha256.Sum256([]byte(result.StdoutTail + result.StderrTail))
+	result.OutputSHA256 = hex.EncodeToString(sum[:])
+	if err == nil {
+		result.ExitCode = 0
+		result.Passed = true
+		return result
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		result.ExitCode = exitErr.ExitCode()
+	} else if result.TimedOut {
+		result.ExitCode = -1
+		result.StderrTail = appendTail(result.StderrTail, "command timed out", s.outputCapBytes())
+	} else {
+		result.StderrTail = appendTail(result.StderrTail, err.Error(), s.outputCapBytes())
+	}
+	return result
+}
+
+type cappedOutput struct {
+	cap       int
+	buf       []byte
+	truncated bool
+}
+
+func (w *cappedOutput) Write(p []byte) (int, error) {
+	if w.cap <= 0 {
+		w.cap = defaultVerifyOutputCapBytes
+	}
+	remaining := w.cap - len(w.buf)
+	if remaining > 0 {
+		if len(p) <= remaining {
+			w.buf = append(w.buf, p...)
+		} else {
+			w.buf = append(w.buf, p[:remaining]...)
+			w.truncated = true
+		}
+	} else if len(p) > 0 {
+		w.truncated = true
+	}
+	return len(p), nil
+}
+
+func (w *cappedOutput) String() string { return string(w.buf) }
+
+func appendTail(existing, msg string, capBytes int) string {
+	if strings.TrimSpace(msg) == "" {
+		return existing
+	}
+	if existing != "" {
+		existing += "\n"
+	}
+	existing += msg
+	if capBytes > 0 && len(existing) > capBytes {
+		return existing[len(existing)-capBytes:]
+	}
+	return existing
 }
 
 type HandoffStageConfig struct {
@@ -290,7 +496,7 @@ func expandExpectedPath(root, pattern string) []string {
 	return out
 }
 
-func persistVerifyEvent(ctx context.Context, env StageEnv, eventType string, payload any) error {
+func persistVerifyEvent(ctx context.Context, env StageEnv, eventType, suffix string, payload any) error {
 	store, ok := env.Store.(*state.Store)
 	if !ok || store == nil || env.Project == nil || env.Run == nil {
 		return nil
@@ -299,7 +505,7 @@ func persistVerifyEvent(ctx context.Context, env StageEnv, eventType string, pay
 	if err != nil {
 		return err
 	}
-	seed := env.Project.ProjectID() + ":" + env.Run.RunID() + ":" + string(StageVerify) + ":" + eventType
+	seed := env.Project.ProjectID() + ":" + env.Run.RunID() + ":" + string(StageVerify) + ":" + eventType + ":" + suffix
 	hash := sha256.Sum256([]byte(seed))
 	_, err = store.PersistEvent(ctx, contract.EventEnvelope{EventID: "evt_verify_" + hex.EncodeToString(hash[:8]), ProjectID: env.Project.ProjectID(), RunID: env.Run.RunID(), Stage: string(StageVerify), Type: eventType, Source: contract.EventSourceCore, Timestamp: time.Now().UTC(), Payload: data})
 	return err

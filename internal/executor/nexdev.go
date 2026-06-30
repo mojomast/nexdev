@@ -27,17 +27,17 @@ const (
 var ErrTaskWriteNotExpected = errors.New("task write is outside expected files")
 
 type NexdevExecutorConfig struct {
-	Store                 *state.Store
-	ProjectID             string
-	RunID                 string
-	ProjectRoot           string
-	ArtifactRoot          string
-	ArtifactBudgetChars   int
-	ArtifactTotalChars    int
-	Worker                TaskWorker
-	Sanitizer             *safety.PathSanitizer
-	NewID                 func(prefix string) string
-	Now                   func() time.Time
+	Store               *state.Store
+	ProjectID           string
+	RunID               string
+	ProjectRoot         string
+	ArtifactRoot        string
+	ArtifactBudgetChars int
+	ArtifactTotalChars  int
+	Worker              TaskWorker
+	Sanitizer           *safety.PathSanitizer
+	NewID               func(prefix string) string
+	Now                 func() time.Time
 }
 
 type TaskWork struct {
@@ -55,10 +55,10 @@ type TaskWorker interface {
 }
 
 type TaskPromptContext struct {
-	SafetyPolicy         string            `json:"safety_policy"`
-	ToolPolicy           string            `json:"tool_policy"`
-	ProjectRequirements  []string          `json:"project_requirements,omitempty"`
-	ArchitectureSummary  string            `json:"architecture_summary,omitempty"`
+	SafetyPolicy         string                     `json:"safety_policy"`
+	ToolPolicy           string                     `json:"tool_policy"`
+	ProjectRequirements  []string                   `json:"project_requirements,omitempty"`
+	ArchitectureSummary  string                     `json:"architecture_summary,omitempty"`
 	Task                 contract.TaskSpec          `json:"task"`
 	TaskContext          steering.TaskContext       `json:"task_context"`
 	RelevantRepoContext  string                     `json:"relevant_repo_context,omitempty"`
@@ -70,17 +70,17 @@ type TaskPromptContext struct {
 }
 
 type NexdevExecutor struct {
-	store       *state.Store
-	projectID   string
-	runID       string
+	store               *state.Store
+	projectID           string
+	runID               string
 	projectRoot         string
 	artifactRoot        string
 	artifactBudgetChars int
 	artifactTotalChars  int
 	worker              TaskWorker
-	sanitizer   *safety.PathSanitizer
-	newID       func(prefix string) string
-	now         func() time.Time
+	sanitizer           *safety.PathSanitizer
+	newID               func(prefix string) string
+	now                 func() time.Time
 
 	mu          sync.Mutex
 	cond        *sync.Cond

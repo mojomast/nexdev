@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mojomast/nexdev/internal/contract"
+	"github.com/mojomast/nexdev/internal/safety"
 	"github.com/mojomast/nexdev/internal/state"
 )
 
@@ -24,7 +26,7 @@ func TestVerifyAndHandoffStagesWriteArtifacts(t *testing.T) {
 	if err := verify.Run(ctx, env); err != nil {
 		t.Fatalf("VerifyStage.Run failed: %v", err)
 	}
-	var report contract.VerifyReport
+	var report verifyReport
 	if err := json.Unmarshal(readStageArtifact(t, root, verifyReportArtifactRelPath), &report); err != nil {
 		t.Fatalf("verify report invalid: %v", err)
 	}
@@ -69,11 +71,115 @@ func TestVerifyStageDeniesCommandsWithoutExecuting(t *testing.T) {
 	if err := stage.Run(ctx, env); err != nil {
 		t.Fatalf("VerifyStage.Run failed: %v", err)
 	}
-	var report contract.VerifyReport
+	var report verifyReport
 	if err := json.Unmarshal(readStageArtifact(t, root, verifyReportArtifactRelPath), &report); err != nil {
 		t.Fatalf("verify report invalid: %v", err)
 	}
-	if report.Passed || len(report.Commands) != 1 || report.Commands[0].ExitCode != 126 || !strings.Contains(report.Commands[0].StderrTail, "denied") {
+	if report.Passed || len(report.Commands) != 1 || report.Commands[0].ExitCode != 126 || !strings.Contains(report.Commands[0].StderrTail, "denied") || report.Commands[0].Attempts != 1 {
 		t.Fatalf("unexpected denied command report: %#v", report)
+	}
+}
+
+func TestVerifyStagePassingCommandWritesPassStatus(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	_, env := seededDevelopEnv(t, ctx, root, "proj_verify_pass", "run_verify_pass")
+	policy := safety.DefaultToolPolicy()
+	policy.Shell.AllowCommands = []string{"go version"}
+	stage := NewVerifyStage(VerifyStageConfig{ProjectRoot: root, Commands: []string{"go version"}, Policy: policy})
+
+	if err := stage.Run(ctx, env); err != nil {
+		t.Fatalf("VerifyStage.Run failed: %v", err)
+	}
+	var report verifyReport
+	if err := json.Unmarshal(readStageArtifact(t, root, verifyReportArtifactRelPath), &report); err != nil {
+		t.Fatalf("verify report invalid: %v", err)
+	}
+	if !report.Passed || len(report.Commands) != 1 || !report.Commands[0].Passed || report.Commands[0].ExitCode != 0 || report.Commands[0].Attempts != 1 {
+		t.Fatalf("unexpected pass report: %#v", report)
+	}
+}
+
+func TestVerifyStageOutputCapTruncatesReport(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	_, env := seededDevelopEnv(t, ctx, root, "proj_verify_truncate", "run_verify_truncate")
+	policy := safety.DefaultToolPolicy()
+	policy.Shell.AllowCommands = []string{"go env"}
+	stage := NewVerifyStage(VerifyStageConfig{ProjectRoot: root, Commands: []string{"go env"}, Policy: policy, OutputCapBytes: 8})
+
+	if err := stage.Run(ctx, env); err != nil {
+		t.Fatalf("VerifyStage.Run failed: %v", err)
+	}
+	var report verifyReport
+	if err := json.Unmarshal(readStageArtifact(t, root, verifyReportArtifactRelPath), &report); err != nil {
+		t.Fatalf("verify report invalid: %v", err)
+	}
+	if len(report.Commands) != 1 || !report.Commands[0].OutputTruncated || len(report.Commands[0].StdoutTail) > 8 {
+		t.Fatalf("output was not capped: %#v", report.Commands)
+	}
+}
+
+func TestVerifyStageRepairLoopRerunsUpToCapThenFails(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	_, env := seededDevelopEnv(t, ctx, root, "proj_verify_repair", "run_verify_repair")
+	policy := safety.DefaultToolPolicy()
+	policy.Shell.AllowCommands = []string{"false"}
+	stage := NewVerifyStage(VerifyStageConfig{ProjectRoot: root, Commands: []string{"false"}, Policy: policy, RepairAttempts: 2})
+
+	if err := stage.Run(ctx, env); err != nil {
+		t.Fatalf("VerifyStage.Run failed: %v", err)
+	}
+	var report verifyReport
+	if err := json.Unmarshal(readStageArtifact(t, root, verifyReportArtifactRelPath), &report); err != nil {
+		t.Fatalf("verify report invalid: %v", err)
+	}
+	if report.Passed || len(report.Commands) != 1 || report.Commands[0].Attempts != 3 || len(report.RepairAttempts) != 2 {
+		t.Fatalf("unexpected repair report: %#v", report)
+	}
+}
+
+func TestVerifyStageTimeoutMarksPendingCommandsTimedOut(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	_, env := seededDevelopEnv(t, ctx, root, "proj_verify_timeout", "run_verify_timeout")
+	policy := safety.DefaultToolPolicy()
+	policy.Shell.AllowCommands = []string{"sleep 1", "go version"}
+	stage := NewVerifyStage(VerifyStageConfig{ProjectRoot: root, Commands: []string{"sleep 1", "go version"}, Policy: policy, TotalTimeout: 10 * time.Millisecond})
+
+	if err := stage.Run(ctx, env); err != nil {
+		t.Fatalf("VerifyStage.Run failed: %v", err)
+	}
+	var report verifyReport
+	if err := json.Unmarshal(readStageArtifact(t, root, verifyReportArtifactRelPath), &report); err != nil {
+		t.Fatalf("verify report invalid: %v", err)
+	}
+	if report.Passed || len(report.Commands) != 2 || !report.Commands[0].TimedOut || !report.Commands[1].TimedOut || report.Commands[1].Attempts != 0 {
+		t.Fatalf("pending command was not timed out: %#v", report.Commands)
+	}
+}
+
+func TestVerifyStageFakeRepairSeamRecordsAttempt(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	_, env := seededDevelopEnv(t, ctx, root, "proj_verify_fake_repair", "run_verify_fake_repair")
+	policy := safety.DefaultToolPolicy()
+	policy.Shell.AllowCommands = []string{"false"}
+	called := 0
+	stage := NewVerifyStage(VerifyStageConfig{ProjectRoot: root, Commands: []string{"false"}, Policy: policy, RepairAttempts: 1, RepairFunc: func(context.Context, VerifyRepairAttempt) error {
+		called++
+		return nil
+	}})
+
+	if err := stage.Run(ctx, env); err != nil {
+		t.Fatalf("VerifyStage.Run failed: %v", err)
+	}
+	var report verifyReport
+	if err := json.Unmarshal(readStageArtifact(t, root, verifyReportArtifactRelPath), &report); err != nil {
+		t.Fatalf("verify report invalid: %v", err)
+	}
+	if called != 1 || len(report.RepairAttempts) != 1 || report.Commands[0].Attempts != 2 {
+		t.Fatalf("fake repair seam not used: called=%d report=%#v", called, report)
 	}
 }
