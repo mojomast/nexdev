@@ -28,15 +28,21 @@ const (
 type VerifyStageConfig struct {
 	ProjectRoot string
 	Commands    []string
+	Now         func() time.Time
 }
 
 type VerifyStage struct {
 	config VerifyStageConfig
 	report contract.VerifyReport
 	wrote  bool
+	now    func() time.Time
 }
 
-func NewVerifyStage(cfg VerifyStageConfig) *VerifyStage { return &VerifyStage{config: cfg} }
+func NewVerifyStage(cfg VerifyStageConfig) *VerifyStage {
+	return &VerifyStage{config: cfg, now: normalizeStageClock(cfg.Now)}
+}
+
+func (s *VerifyStage) setClock(now func() time.Time) { s.now = normalizeStageClock(now) }
 
 func (s *VerifyStage) Name() Stage { return StageVerify }
 
@@ -61,7 +67,7 @@ func (s *VerifyStage) Run(ctx context.Context, env StageEnv) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := s.now().Format(time.RFC3339Nano)
 	commands := make([]contract.CommandResult, 0, len(s.config.Commands))
 	for _, command := range s.config.Commands {
 		command = strings.TrimSpace(command)
@@ -75,7 +81,7 @@ func (s *VerifyStage) Run(ctx context.Context, env StageEnv) error {
 	if len(commands) > 0 {
 		report.Failures = []contract.Finding{{Severity: "medium", Title: "Verification command denied", Description: "Shell execution is denied by default policy in fake-provider E2E."}}
 	}
-	if err := writeStageArtifact(ctx, env, s.projectRoot(), verifyReportArtifactRelPath, contract.ArtifactKindVerifyReport, StageVerify, report); err != nil {
+	if err := writeStageArtifact(ctx, env, s.projectRoot(), verifyReportArtifactRelPath, contract.ArtifactKindVerifyReport, StageVerify, report, s.now); err != nil {
 		return err
 	}
 	if err := persistVerifyEvent(ctx, env, contract.EventTypeVerifyStarted, map[string]any{"command_count": len(commands)}); err != nil {
@@ -111,14 +117,20 @@ func (s *VerifyStage) projectRoot() string {
 type HandoffStageConfig struct {
 	ProjectRoot string
 	Request     string
+	Now         func() time.Time
 }
 
 type HandoffStage struct {
 	config HandoffStageConfig
 	output map[string]any
+	now    func() time.Time
 }
 
-func NewHandoffStage(cfg HandoffStageConfig) *HandoffStage { return &HandoffStage{config: cfg} }
+func NewHandoffStage(cfg HandoffStageConfig) *HandoffStage {
+	return &HandoffStage{config: cfg, now: normalizeStageClock(cfg.Now)}
+}
+
+func (s *HandoffStage) setClock(now func() time.Time) { s.now = normalizeStageClock(now) }
 
 func (s *HandoffStage) Name() Stage { return StageHandoff }
 
@@ -144,7 +156,7 @@ func (s *HandoffStage) Run(ctx context.Context, env StageEnv) error {
 	if err != nil {
 		return err
 	}
-	if err := writeStageArtifact(ctx, env, s.projectRoot(), changedFilesArtifactRelPath, contract.ArtifactKindChangedFiles, StageHandoff, map[string]any{"changed_files": changed}); err != nil {
+	if err := writeStageArtifact(ctx, env, s.projectRoot(), changedFilesArtifactRelPath, contract.ArtifactKindChangedFiles, StageHandoff, map[string]any{"changed_files": changed}, s.now); err != nil {
 		return err
 	}
 	run, err := store.GetRun(ctx, env.Run.RunID())
@@ -169,11 +181,11 @@ func (s *HandoffStage) Run(ctx context.Context, env StageEnv) error {
 		}
 		summary.Stages = append(summary.Stages, item)
 	}
-	if err := writeStageArtifact(ctx, env, s.projectRoot(), runSummaryArtifactRelPath, contract.ArtifactKindRunSummary, StageHandoff, summary); err != nil {
+	if err := writeStageArtifact(ctx, env, s.projectRoot(), runSummaryArtifactRelPath, contract.ArtifactKindRunSummary, StageHandoff, summary, s.now); err != nil {
 		return err
 	}
 	markdown := renderHandoffMarkdown(s.config.Request, summary, changed)
-	if err := writeMarkdownStageArtifact(ctx, env, s.projectRoot(), handoffArtifactRelPath, contract.ArtifactKindHandoff, StageHandoff, markdown); err != nil {
+	if err := writeMarkdownStageArtifact(ctx, env, s.projectRoot(), handoffArtifactRelPath, contract.ArtifactKindHandoff, StageHandoff, markdown, s.now); err != nil {
 		return err
 	}
 	s.output = map[string]any{"handoff": handoffArtifactRelPath, "changed_files": changedFilesArtifactRelPath, "run_summary": runSummaryArtifactRelPath}

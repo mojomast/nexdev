@@ -30,6 +30,7 @@ type PlanDetailStageConfig struct {
 	ProjectRoot       string
 	PlanVersion       int
 	MaxRepairAttempts int
+	Now               func() time.Time
 }
 
 type PlanDetailStage struct {
@@ -37,11 +38,14 @@ type PlanDetailStage struct {
 	config PlanDetailStageConfig
 	plan   devPlanArtifact
 	wrote  bool
+	now    func() time.Time
 }
 
 func NewPlanDetailStage(client provider.StructuredClient, cfg PlanDetailStageConfig) *PlanDetailStage {
-	return &PlanDetailStage{client: client, config: cfg}
+	return &PlanDetailStage{client: client, config: cfg, now: normalizeStageClock(cfg.Now)}
 }
+
+func (s *PlanDetailStage) setClock(now func() time.Time) { s.now = normalizeStageClock(now) }
 
 func (s *PlanDetailStage) Name() Stage { return StagePlanDetail }
 
@@ -101,13 +105,13 @@ func (s *PlanDetailStage) Run(ctx context.Context, env StageEnv) error {
 	}
 	planVersion := s.planVersion()
 	plan := devPlanArtifact{PlanVersion: planVersion, Phases: phases, Tasks: tasks}
-	if err := writeStageArtifact(ctx, env, s.projectRoot(), devplanJSONArtifactRelPath, contract.ArtifactKindDevplanJSON, StagePlanDetail, plan); err != nil {
+	if err := writeStageArtifact(ctx, env, s.projectRoot(), devplanJSONArtifactRelPath, contract.ArtifactKindDevplanJSON, StagePlanDetail, plan, s.now); err != nil {
 		return err
 	}
-	if err := writeMarkdownStageArtifact(ctx, env, s.projectRoot(), devplanMDArtifactRelPath, contract.ArtifactKindDevplanMarkdown, StagePlanDetail, renderDevplanMarkdown(plan)); err != nil {
+	if err := writeMarkdownStageArtifact(ctx, env, s.projectRoot(), devplanMDArtifactRelPath, contract.ArtifactKindDevplanMarkdown, StagePlanDetail, renderDevplanMarkdown(plan), s.now); err != nil {
 		return err
 	}
-	if err := writePhaseArtifacts(ctx, env, s.projectRoot(), plan); err != nil {
+	if err := writePhaseArtifacts(ctx, env, s.projectRoot(), plan, s.now); err != nil {
 		return err
 	}
 	if err := persistPlanTasks(ctx, env, plan); err != nil {
@@ -166,19 +170,20 @@ func (s *PlanDetailStage) buildPrompt(phases []contract.PhaseSketch) string {
 	return b.String()
 }
 
-func writePhaseArtifacts(ctx context.Context, env StageEnv, root string, plan devPlanArtifact) error {
+func writePhaseArtifacts(ctx context.Context, env StageEnv, root string, plan devPlanArtifact, now func() time.Time) error {
 	for _, phase := range plan.Phases {
-		if err := writePhaseMarkdownArtifact(ctx, env, root, phaseArtifactRelPath(phase.Number), renderPhaseMarkdown(plan, phase)); err != nil {
+		if err := writePhaseMarkdownArtifact(ctx, env, root, phaseArtifactRelPath(phase.Number), renderPhaseMarkdown(plan, phase), now); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writePhaseMarkdownArtifact(ctx context.Context, env StageEnv, projectRoot, relPath, markdown string) error {
+func writePhaseMarkdownArtifact(ctx context.Context, env StageEnv, projectRoot, relPath, markdown string, now func() time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	now = normalizeStageClock(now)
 	data := []byte(markdown)
 	if len(data) == 0 || data[len(data)-1] != '\n' {
 		data = append(data, '\n')
@@ -201,7 +206,7 @@ func writePhaseMarkdownArtifact(ctx context.Context, env StageEnv, projectRoot, 
 	hash := sha256.Sum256(data)
 	idSeed := env.Project.ProjectID() + ":" + runID + ":" + string(contract.ArtifactKindPhaseMarkdown) + ":" + relPath
 	idHash := sha256.Sum256([]byte(idSeed))
-	now := time.Now().UTC()
+	writtenAt := now()
 	return store.UpsertArtifact(ctx, &state.Artifact{
 		ID:        "artifact_" + hex.EncodeToString(idHash[:8]),
 		ProjectID: env.Project.ProjectID(),
@@ -213,8 +218,8 @@ func writePhaseMarkdownArtifact(ctx context.Context, env StageEnv, projectRoot, 
 		Metadata: map[string]any{
 			"stage": string(StagePlanDetail),
 		},
-		CreatedAt: now,
-		UpdatedAt: now,
+		CreatedAt: writtenAt,
+		UpdatedAt: writtenAt,
 	})
 }
 

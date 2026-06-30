@@ -34,6 +34,7 @@ type DesignStageConfig struct {
 	MaxRepairAttempts int
 	AcceptRisk        bool
 	AdditionalContext []string
+	Now               func() time.Time
 }
 
 type DesignStage struct {
@@ -41,6 +42,7 @@ type DesignStage struct {
 	config DesignStageConfig
 	result designStageResult
 	wrote  bool
+	now    func() time.Time
 }
 
 type designStageResult struct {
@@ -77,8 +79,10 @@ type designMetadata struct {
 }
 
 func NewDesignStage(client provider.StructuredClient, cfg DesignStageConfig) *DesignStage {
-	return &DesignStage{client: client, config: cfg}
+	return &DesignStage{client: client, config: cfg, now: normalizeStageClock(cfg.Now)}
 }
+
+func (s *DesignStage) setClock(now func() time.Time) { s.now = normalizeStageClock(now) }
 
 func (s *DesignStage) Name() Stage { return StageDesign }
 
@@ -155,7 +159,7 @@ func (s *DesignStage) Run(ctx context.Context, env StageEnv) error {
 		s.result = designStageResult{DesignMarkdown: current, Iterations: iterations, ActionableFindings: findings, Metadata: metadata}
 		return &BlockedError{Reason: "design has unresolved high-severity actionable findings"}
 	}
-	if err := writeMarkdownStageArtifact(ctx, env, s.projectRoot(), designArtifactRelPath, contract.ArtifactKindDesignDraft, StageDesign, current); err != nil {
+	if err := writeMarkdownStageArtifact(ctx, env, s.projectRoot(), designArtifactRelPath, contract.ArtifactKindDesignDraft, StageDesign, current, s.now); err != nil {
 		return err
 	}
 	s.result = designStageResult{DesignMarkdown: current, Iterations: iterations, ActionableFindings: findings, Metadata: metadata}
@@ -345,10 +349,11 @@ func writeTrustedList(b *strings.Builder, label string, values []string) {
 	}
 }
 
-func writeMarkdownStageArtifact(ctx context.Context, env StageEnv, projectRoot, relPath string, kind contract.ArtifactKind, stage Stage, markdown string) error {
+func writeMarkdownStageArtifact(ctx context.Context, env StageEnv, projectRoot, relPath string, kind contract.ArtifactKind, stage Stage, markdown string, now func() time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	now = normalizeStageClock(now)
 	data := []byte(markdown)
 	if len(data) == 0 || data[len(data)-1] != '\n' {
 		data = append(data, '\n')
@@ -369,7 +374,7 @@ func writeMarkdownStageArtifact(ctx context.Context, env StageEnv, projectRoot, 
 		runID = env.Run.RunID()
 	}
 	hash := sha256.Sum256(data)
-	now := time.Now().UTC()
+	writtenAt := now()
 	return store.UpsertArtifact(ctx, &state.Artifact{
 		ID:        stageArtifactID(env.Project.ProjectID(), runID, string(kind)),
 		ProjectID: env.Project.ProjectID(),
@@ -381,8 +386,8 @@ func writeMarkdownStageArtifact(ctx context.Context, env StageEnv, projectRoot, 
 		Metadata: map[string]any{
 			"stage": string(stage),
 		},
-		CreatedAt: now,
-		UpdatedAt: now,
+		CreatedAt: writtenAt,
+		UpdatedAt: writtenAt,
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mojomast/nexdev/internal/contract"
 	"github.com/mojomast/nexdev/internal/provider"
@@ -19,6 +20,7 @@ type ComplexityStageConfig struct {
 	UseProviderRefine     bool
 	MaxRepairAttempts     int
 	MinimumSuggestedTests []string
+	Now                   func() time.Time
 }
 
 type ComplexityStage struct {
@@ -26,11 +28,14 @@ type ComplexityStage struct {
 	config  ComplexityStageConfig
 	profile contract.ComplexityProfile
 	wrote   bool
+	now     func() time.Time
 }
 
 func NewComplexityStage(client provider.StructuredClient, cfg ComplexityStageConfig) *ComplexityStage {
-	return &ComplexityStage{client: client, config: cfg}
+	return &ComplexityStage{client: client, config: cfg, now: normalizeStageClock(cfg.Now)}
 }
+
+func (s *ComplexityStage) setClock(now func() time.Time) { s.now = normalizeStageClock(now) }
 
 func (s *ComplexityStage) Name() Stage { return StageComplexity }
 
@@ -87,7 +92,7 @@ func (s *ComplexityStage) Run(ctx context.Context, env StageEnv) error {
 	if err := validateComplexityProfile(profile); err != nil {
 		return err
 	}
-	if err := writeStageArtifact(ctx, env, s.projectRoot(), complexityArtifactRelPath, contract.ArtifactKindComplexityProfile, StageComplexity, profile); err != nil {
+	if err := writeStageArtifact(ctx, env, s.projectRoot(), complexityArtifactRelPath, contract.ArtifactKindComplexityProfile, StageComplexity, profile, s.now); err != nil {
 		return err
 	}
 	s.profile = profile

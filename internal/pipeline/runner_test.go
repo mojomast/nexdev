@@ -108,6 +108,20 @@ func TestRunnerResumeSelectsPersistedNextStage(t *testing.T) {
 	}
 }
 
+func TestLatestStageRunsSortsDuplicateStagesDeterministically(t *testing.T) {
+	older := &state.StageRun{ID: "stage_001", Stage: string(StageInterview), Status: string(StageStatusCompleted)}
+	newer := &state.StageRun{ID: "stage_999", Stage: string(StageInterview), Status: string(StageStatusRunning)}
+	other := &state.StageRun{ID: "stage_100", Stage: string(StageDesign), Status: string(StageStatusPending)}
+
+	latest := latestStageRuns([]*state.StageRun{newer, nil, other, older})
+	if latest[StageInterview] != newer {
+		t.Fatalf("latest interview = %#v, want lexicographically newest duplicate", latest[StageInterview])
+	}
+	if latest[StageDesign] != other {
+		t.Fatalf("latest design = %#v, want original design run", latest[StageDesign])
+	}
+}
+
 func TestRunnerEnforcesPersistedStatusTransitions(t *testing.T) {
 	ctx := context.Background()
 	store, runID := newRunnerTestStore(t)

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,7 @@ func TestRoleHierarchy(t *testing.T) {
 		{name: "admin includes operator", actual: RoleAdmin, required: RoleOperator, want: true},
 		{name: "observer cannot operate", actual: RoleObserver, required: RoleOperator, want: false},
 		{name: "operator cannot admin", actual: RoleOperator, required: RoleAdmin, want: false},
+		{name: "per-tool is not an actor role", actual: RolePerTool, required: RoleObserver, want: false},
 		{name: "unknown role denied", actual: Role("root"), required: RoleObserver, want: false},
 	}
 
@@ -152,6 +154,13 @@ func TestPerToolRouteDelegatesToToolRole(t *testing.T) {
 	}
 	if !AllowsRoute(RoleAdmin, RolePerTool, RoleAdmin) {
 		t.Fatal("admin should be allowed for an admin MCP tool")
+	}
+}
+
+func TestAuthThrottleKeyIgnoresForwardedFor(t *testing.T) {
+	r := &http.Request{RemoteAddr: "192.0.2.10:12345", Header: http.Header{"X-Forwarded-For": []string{"203.0.113.99"}}}
+	if got := authThrottleKey(r); got != "192.0.2.10" {
+		t.Fatalf("authThrottleKey() = %q, want RemoteAddr host", got)
 	}
 }
 

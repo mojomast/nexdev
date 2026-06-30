@@ -154,6 +154,37 @@ func TestCheckQuotaWarning(t *testing.T) {
 	}
 }
 
+func TestCheckQuotaWarningUsesSeverityRankForCostOverride(t *testing.T) {
+	store, err := state.NewStore(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	monitor := NewMonitor(store)
+	tokensRemaining := 800
+	tokensLimit := 1000
+	costRemaining := 1.0
+	costLimit := 100.0
+	info := &state.QuotaInfo{
+		Provider:        "test",
+		TokensRemaining: &tokensRemaining,
+		TokensLimit:     &tokensLimit,
+		CostRemaining:   &costRemaining,
+		CostLimit:       &costLimit,
+		ResetAt:         time.Now().Add(24 * time.Hour),
+		CheckedAt:       time.Now(),
+	}
+
+	warning := monitor.checkQuotaWarning(info)
+	if warning == nil {
+		t.Fatal("expected warning, got nil")
+	}
+	if warning.Level != WarningCritical {
+		t.Fatalf("warning level = %s, want %s", warning.Level, WarningCritical)
+	}
+}
+
 func TestGetCachedStatus(t *testing.T) {
 	tmpDB := t.TempDir() + "/test.db"
 	defer os.Remove(tmpDB)

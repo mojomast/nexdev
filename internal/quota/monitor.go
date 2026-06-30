@@ -2,6 +2,7 @@ package quota
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/mojomast/nexdev/internal/provider"
@@ -10,13 +11,19 @@ import (
 
 // Monitor handles rate limit and quota monitoring
 type Monitor struct {
-	store *state.Store
+	store  *state.Store
+	logger *slog.Logger
 }
 
 // NewMonitor creates a new quota monitor
-func NewMonitor(store *state.Store) *Monitor {
+func NewMonitor(store *state.Store, logger ...*slog.Logger) *Monitor {
+	log := slog.Default()
+	if len(logger) > 0 && logger[0] != nil {
+		log = logger[0]
+	}
 	return &Monitor{
-		store: store,
+		store:  store,
+		logger: log,
 	}
 }
 
@@ -81,7 +88,7 @@ func (m *Monitor) CheckProvider(providerName string, prov provider.Provider) (*P
 		// Save to store
 		if err := m.store.SaveRateLimit(providerName, stateRateLimitInfo); err != nil {
 			// Non-fatal - continue
-			fmt.Printf("Warning: failed to save rate limit info: %v\n", err)
+			m.logger.Warn("failed to save rate limit info", "provider", providerName, "error", err)
 		}
 
 		status.RateLimitInfo = stateRateLimitInfo
@@ -122,7 +129,7 @@ func (m *Monitor) CheckProvider(providerName string, prov provider.Provider) (*P
 		// Save to store
 		if err := m.store.SaveQuota(providerName, stateQuotaInfo); err != nil {
 			// Non-fatal - continue
-			fmt.Printf("Warning: failed to save quota info: %v\n", err)
+			m.logger.Warn("failed to save quota info", "provider", providerName, "error", err)
 		}
 
 		status.QuotaInfo = stateQuotaInfo
@@ -260,7 +267,7 @@ func (m *Monitor) checkQuotaWarning(info *state.QuotaInfo) *Warning {
 		}
 
 		// Use worse warning level
-		if costLevel > level {
+		if warningLevelRank(costLevel) > warningLevelRank(level) {
 			level = costLevel
 			message = costMessage
 			percentage = costPercentage
@@ -276,6 +283,23 @@ func (m *Monitor) checkQuotaWarning(info *state.QuotaInfo) *Warning {
 		Message:     message,
 		Percentage:  percentage,
 		TimeToReset: time.Until(info.ResetAt),
+	}
+}
+
+func warningLevelRank(l WarningLevel) int {
+	switch l {
+	case WarningExceeded:
+		return 5
+	case WarningCritical:
+		return 4
+	case WarningWarning:
+		return 3
+	case WarningCaution:
+		return 2
+	case WarningInfo:
+		return 1
+	default:
+		return 0
 	}
 }
 

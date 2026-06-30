@@ -28,6 +28,7 @@ type InterviewStageConfig struct {
 	MaxRepairAttempts   int
 	AdditionalContext   []string
 	ArtifactProjectRoot string
+	Now                 func() time.Time
 }
 
 type InterviewStage struct {
@@ -35,11 +36,14 @@ type InterviewStage struct {
 	config InterviewStageConfig
 	data   contract.InterviewData
 	wrote  bool
+	now    func() time.Time
 }
 
 func NewInterviewStage(client provider.StructuredClient, cfg InterviewStageConfig) *InterviewStage {
-	return &InterviewStage{client: client, config: cfg}
+	return &InterviewStage{client: client, config: cfg, now: normalizeStageClock(cfg.Now)}
 }
+
+func (s *InterviewStage) setClock(now func() time.Time) { s.now = normalizeStageClock(now) }
 
 func (s *InterviewStage) Name() Stage { return StageInterview }
 
@@ -93,7 +97,7 @@ func (s *InterviewStage) Run(ctx context.Context, env StageEnv) error {
 	if err := validateInterviewData(data); err != nil {
 		return err
 	}
-	if err := writeStageArtifact(ctx, env, s.projectRoot(), interviewArtifactRelPath, contract.ArtifactKindInterview, StageInterview, data); err != nil {
+	if err := writeStageArtifact(ctx, env, s.projectRoot(), interviewArtifactRelPath, contract.ArtifactKindInterview, StageInterview, data, s.now); err != nil {
 		return err
 	}
 	s.data = data
@@ -185,10 +189,11 @@ func validateInterviewData(data contract.InterviewData) error {
 	return nil
 }
 
-func writeStageArtifact(ctx context.Context, env StageEnv, projectRoot, relPath string, kind contract.ArtifactKind, stage Stage, payload any) error {
+func writeStageArtifact(ctx context.Context, env StageEnv, projectRoot, relPath string, kind contract.ArtifactKind, stage Stage, payload any, now func() time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	now = normalizeStageClock(now)
 	data, err := json.MarshalIndent(redactedArtifactPayload(payload), "", "  ")
 	if err != nil {
 		return err
@@ -210,7 +215,7 @@ func writeStageArtifact(ctx context.Context, env StageEnv, projectRoot, relPath 
 		runID = env.Run.RunID()
 	}
 	hash := sha256.Sum256(data)
-	now := time.Now().UTC()
+	writtenAt := now()
 	return store.UpsertArtifact(ctx, &state.Artifact{
 		ID:        stageArtifactID(env.Project.ProjectID(), runID, string(kind)),
 		ProjectID: env.Project.ProjectID(),
@@ -222,9 +227,16 @@ func writeStageArtifact(ctx context.Context, env StageEnv, projectRoot, relPath 
 		Metadata: map[string]any{
 			"stage": string(stage),
 		},
-		CreatedAt: now,
-		UpdatedAt: now,
+		CreatedAt: writtenAt,
+		UpdatedAt: writtenAt,
 	})
+}
+
+func normalizeStageClock(now func() time.Time) func() time.Time {
+	if now == nil {
+		return func() time.Time { return time.Now().UTC() }
+	}
+	return func() time.Time { return now().UTC() }
 }
 
 func redactedArtifactPayload(payload any) any {
@@ -278,6 +290,9 @@ func emitPromptInjectionWarnings(ctx context.Context, env StageEnv, stage Stage,
 		_, err = store.PersistEvent(ctx, contract.EventEnvelope{EventID: stageWarningEventID(env.Project.ProjectID(), env.Run.RunID(), string(stage), sourceLabel, i), RunID: env.Run.RunID(), Stage: string(stage), Type: contract.EventTypeSecurityWarning, Source: contract.EventSourceCore, Payload: data})
 		if err != nil {
 			return err
+		}
+		if err := safety.EnforcePromptInjection(value); err != nil {
+			return &BlockedError{Reason: fmt.Sprintf("%s prompt injection warning: %s", sourceLabel, err.Error()), Err: err}
 		}
 	}
 	return nil

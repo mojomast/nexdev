@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const maxAncestorWalkDepth = 64
+
 type PathSanitizer struct {
 	root      string
 	denyGlobs []string
@@ -134,7 +136,10 @@ func resolvePathForWrite(abs string) (string, error) {
 	}
 	current := abs
 	tail := []string{}
-	for {
+	for depth := 0; ; depth++ {
+		if depth > maxAncestorWalkDepth {
+			return filepath.Clean(abs), nil
+		}
 		info, err := os.Lstat(current)
 		if err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {

@@ -6,13 +6,13 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/mojomast/nexdev/internal/state"
@@ -26,7 +26,9 @@ const (
 	RoleObserver Role = "observer"
 	RoleOperator Role = "operator"
 	RoleAdmin    Role = "admin"
-	RolePerTool  Role = "per-tool"
+	// RolePerTool is a route-level marker only; it must not be assigned to actors.
+	// Use AllowsRoute for per-tool authorization checks.
+	RolePerTool Role = "per-tool"
 )
 
 // RouteKey identifies OpenAPI operations without depending on generated server types.
@@ -74,8 +76,6 @@ var RouteRoles = map[RouteKey]Role{
 }
 
 var ErrRemoteBindRequiresAuth = errors.New("non-loopback bind requires auth")
-
-var auditIDCounter atomic.Uint64
 
 type authContextKey struct{}
 
@@ -138,7 +138,7 @@ func NewAuthenticator(cfg AuthenticatorConfig) (*Authenticator, error) {
 	}
 	newID := cfg.NewID
 	if newID == nil {
-		newID = func(prefix string) string { return fmt.Sprintf("%s_%d", prefix, auditIDCounter.Add(1)) }
+		newID = randomControlPlaneID
 	}
 	return &Authenticator{store: cfg.Store, audits: cfg.AuditStore, projectID: cfg.ProjectID, secret: append([]byte(nil), cfg.ServerSecret...), now: now, newID: newID, limiter: cfg.Throttle}, nil
 }
@@ -270,9 +270,9 @@ func authThrottleKey(r *http.Request) string {
 	if r == nil {
 		return "unknown"
 	}
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-		return strings.TrimSpace(strings.Split(forwarded, ",")[0])
-	}
+	// X-Forwarded-For is intentionally not trusted here: Nexdev's local
+	// control plane does not own or verify a trusted proxy boundary, so clients
+	// could spoof that header to bypass local auth throttling.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil && host != "" {
 		return host
@@ -347,6 +347,8 @@ func isLoopbackBind(bind string) bool {
 
 func roleRank(role Role) int {
 	switch role {
+	case RolePerTool:
+		return -1
 	case RoleObserver:
 		return 1
 	case RoleOperator:
@@ -356,4 +358,12 @@ func roleRank(role Role) int {
 	default:
 		return 0
 	}
+}
+
+func randomControlPlaneID(prefix string) string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%s_%d", prefix, time.Now().UTC().UnixNano())
+	}
+	return prefix + "_" + hex.EncodeToString(b[:])
 }

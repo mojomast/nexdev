@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mojomast/nexdev/internal/contract"
 	"github.com/mojomast/nexdev/internal/provider"
@@ -20,6 +21,7 @@ type PlanSketchStageConfig struct {
 	ValidationReport  contract.ValidationReport
 	ProjectRoot       string
 	MaxRepairAttempts int
+	Now               func() time.Time
 }
 
 type PlanSketchStage struct {
@@ -27,11 +29,14 @@ type PlanSketchStage struct {
 	config PlanSketchStageConfig
 	phases []contract.PhaseSketch
 	wrote  bool
+	now    func() time.Time
 }
 
 func NewPlanSketchStage(client provider.StructuredClient, cfg PlanSketchStageConfig) *PlanSketchStage {
-	return &PlanSketchStage{client: client, config: cfg}
+	return &PlanSketchStage{client: client, config: cfg, now: normalizeStageClock(cfg.Now)}
 }
+
+func (s *PlanSketchStage) setClock(now func() time.Time) { s.now = normalizeStageClock(now) }
 
 func (s *PlanSketchStage) Name() Stage { return StagePlanSketch }
 
@@ -93,7 +98,7 @@ func (s *PlanSketchStage) Run(ctx context.Context, env StageEnv) error {
 		return err
 	}
 	s.phases = phases
-	if err := writeStageArtifact(ctx, env, s.projectRoot(), planSketchArtifactRelPath, contract.ArtifactKindDevplanJSON, StagePlanSketch, devPlanArtifact{PlanVersion: 1, Phases: phases, Tasks: []contract.TaskSpec{}}); err != nil {
+	if err := writeStageArtifact(ctx, env, s.projectRoot(), planSketchArtifactRelPath, contract.ArtifactKindDevplanJSON, StagePlanSketch, devPlanArtifact{PlanVersion: 1, Phases: phases, Tasks: []contract.TaskSpec{}}, s.now); err != nil {
 		return err
 	}
 	s.wrote = true

@@ -89,3 +89,21 @@ func TestPathSanitizerRejectsDenyGlob(t *testing.T) {
 		}
 	}
 }
+
+func TestResolvePathForWriteCapsAncestorWalk(t *testing.T) {
+	root := t.TempDir()
+	parts := []string{root}
+	for i := 0; i < maxAncestorWalkDepth+10; i++ {
+		parts = append(parts, "missing")
+	}
+	parts = append(parts, "file.txt")
+	abs := filepath.Join(parts...)
+
+	resolved, err := resolvePathForWrite(abs)
+	if err != nil {
+		t.Fatalf("resolvePathForWrite() error = %v", err)
+	}
+	if resolved != filepath.Clean(abs) {
+		t.Fatalf("resolvePathForWrite() = %q, want clean fallback %q", resolved, filepath.Clean(abs))
+	}
+}

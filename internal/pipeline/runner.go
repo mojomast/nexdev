@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/mojomast/nexdev/internal/contract"
@@ -121,8 +122,15 @@ func (r *Runner) Register(stage PipelineStage) error {
 	if _, exists := r.stages[name]; exists {
 		return fmt.Errorf("stage already registered: %s", name)
 	}
+	if setter, ok := stage.(stageClockSetter); ok {
+		setter.setClock(r.now)
+	}
 	r.stages[name] = stage
 	return nil
+}
+
+type stageClockSetter interface {
+	setClock(func() time.Time)
 }
 
 type RunOptions struct {
@@ -422,8 +430,23 @@ func (r *Runner) prepareEnv(env StageEnv, run *state.Run) StageEnv {
 }
 
 func latestStageRuns(stageRuns []*state.StageRun) map[Stage]*state.StageRun {
+	ordered := append([]*state.StageRun(nil), stageRuns...)
+	// StageRun currently has no CreatedAt field; sort by ID so duplicate-stage
+	// resolution is deterministic and the lexicographically latest ID wins.
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i] == nil && ordered[j] == nil {
+			return false
+		}
+		if ordered[i] == nil {
+			return true
+		}
+		if ordered[j] == nil {
+			return false
+		}
+		return ordered[i].ID < ordered[j].ID
+	})
 	latest := map[Stage]*state.StageRun{}
-	for _, stageRun := range stageRuns {
+	for _, stageRun := range ordered {
 		if stageRun == nil {
 			continue
 		}

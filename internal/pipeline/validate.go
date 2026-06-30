@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mojomast/nexdev/internal/contract"
 	"github.com/mojomast/nexdev/internal/provider"
@@ -26,6 +27,7 @@ type ValidateStageConfig struct {
 	HivemindSynthesis contract.HivemindSynthesis
 	ProjectRoot       string
 	MaxRepairAttempts int
+	Now               func() time.Time
 }
 
 type ValidateStage struct {
@@ -33,11 +35,14 @@ type ValidateStage struct {
 	config ValidateStageConfig
 	report contract.ValidationReport
 	wrote  bool
+	now    func() time.Time
 }
 
 func NewValidateStage(client provider.StructuredClient, cfg ValidateStageConfig) *ValidateStage {
-	return &ValidateStage{client: client, config: cfg}
+	return &ValidateStage{client: client, config: cfg, now: normalizeStageClock(cfg.Now)}
 }
+
+func (s *ValidateStage) setClock(now func() time.Time) { s.now = normalizeStageClock(now) }
 
 func (s *ValidateStage) Name() Stage { return StageValidate }
 
@@ -94,12 +99,12 @@ func (s *ValidateStage) Run(ctx context.Context, env StageEnv) error {
 		report.Verdict = validationVerdictWarn
 	}
 	s.report = report
-	if err := writeStageArtifact(ctx, env, s.projectRoot(), validationReportArtifactRelPath, contract.ArtifactKindValidationReport, StageValidate, report); err != nil {
+	if err := writeStageArtifact(ctx, env, s.projectRoot(), validationReportArtifactRelPath, contract.ArtifactKindValidationReport, StageValidate, report, s.now); err != nil {
 		return err
 	}
 	s.wrote = true
 	if report.Verdict == validationVerdictPass || report.Verdict == validationVerdictWarn {
-		if err := writeMarkdownStageArtifact(ctx, env, s.projectRoot(), validatedDesignArtifactRelPath, contract.ArtifactKindValidatedDesign, StageValidate, s.config.DesignMarkdown); err != nil {
+		if err := writeMarkdownStageArtifact(ctx, env, s.projectRoot(), validatedDesignArtifactRelPath, contract.ArtifactKindValidatedDesign, StageValidate, s.config.DesignMarkdown, s.now); err != nil {
 			return err
 		}
 	}

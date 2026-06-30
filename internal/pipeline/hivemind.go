@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mojomast/nexdev/internal/contract"
 	"github.com/mojomast/nexdev/internal/provider"
@@ -19,17 +20,20 @@ const (
 var defaultHivemindVoices = []string{"skeptic", "pragmatist", "security", "ux", "test", "devil"}
 
 type HivemindStageConfig struct {
-	Interview         contract.InterviewData
-	RepoAnalysis      contract.RepoAnalysis
-	Complexity        contract.ComplexityProfile
-	DesignMarkdown    string
-	ProjectRoot       string
-	Voices            []string
-	Parallel          bool
-	MaxConcurrency    int
-	MaxRepairAttempts int
-	Cycle             int
-	CostGuard         ProviderLaunchGuard
+	Interview                 contract.InterviewData
+	RepoAnalysis              contract.RepoAnalysis
+	Complexity                contract.ComplexityProfile
+	DesignMarkdown            string
+	ProjectRoot               string
+	Voices                    []string
+	Parallel                  bool
+	MaxConcurrency            int
+	MaxRepairAttempts         int
+	Cycle                     int
+	CostGuard                 ProviderLaunchGuard
+	EstimatedPromptTokens     int
+	EstimatedCompletionTokens int
+	Now                       func() time.Time
 }
 
 type ProviderLaunchGuard interface {
@@ -41,6 +45,7 @@ type HivemindStage struct {
 	config HivemindStageConfig
 	result HivemindStageResult
 	wrote  bool
+	now    func() time.Time
 }
 
 type HivemindStageResult struct {
@@ -50,8 +55,10 @@ type HivemindStageResult struct {
 }
 
 func NewHivemindStage(client provider.StructuredClient, cfg HivemindStageConfig) *HivemindStage {
-	return &HivemindStage{client: client, config: cfg}
+	return &HivemindStage{client: client, config: cfg, now: normalizeStageClock(cfg.Now)}
 }
+
+func (s *HivemindStage) setClock(now func() time.Time) { s.now = normalizeStageClock(now) }
 
 func (s *HivemindStage) Name() Stage { return StageHivemind }
 
@@ -113,7 +120,7 @@ func (s *HivemindStage) Run(ctx context.Context, env StageEnv) error {
 		return err
 	}
 	s.result = HivemindStageResult{Cycle: s.cycle(), Critiques: critiques, Synthesis: synthesis}
-	if err := writeStageArtifact(ctx, env, s.projectRoot(), hivemindArtifactRelPath, contract.ArtifactKindDesignReview, StageHivemind, s.result); err != nil {
+	if err := writeStageArtifact(ctx, env, s.projectRoot(), hivemindArtifactRelPath, contract.ArtifactKindDesignReview, StageHivemind, s.result, s.now); err != nil {
 		return err
 	}
 	s.wrote = true
@@ -134,7 +141,18 @@ func (s *HivemindStage) preflightProviderLaunch(ctx context.Context, slot provid
 	if err != nil {
 		return err
 	}
-	return s.config.CostGuard.CheckProviderLaunch(ctx, route.Provider, route.Model, string(StageHivemind), 4000, 2000, calls)
+	promptTokens := s.config.EstimatedPromptTokens
+	if promptTokens <= 0 {
+		promptTokens = len(s.config.DesignMarkdown)/4 + 500
+		if promptTokens < 4000 {
+			promptTokens = 4000
+		}
+	}
+	completionTokens := s.config.EstimatedCompletionTokens
+	if completionTokens <= 0 {
+		completionTokens = 2000
+	}
+	return s.config.CostGuard.CheckProviderLaunch(ctx, route.Provider, route.Model, string(StageHivemind), promptTokens, completionTokens, calls)
 }
 
 func (s *HivemindStage) Resume(ctx context.Context, env StageEnv) error { return s.Run(ctx, env) }

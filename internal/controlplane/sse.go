@@ -49,8 +49,6 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 	heartbeat := time.NewTicker(s.cfg.HeartbeatInterval)
 	defer heartbeat.Stop()
-	poll := time.NewTicker(100 * time.Millisecond)
-	defer poll.Stop()
 
 	for {
 		select {
@@ -68,21 +66,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 			lastSequence = event.Sequence
 			flusher.Flush()
-		case <-poll.C:
-			events, err := s.store.ListEvents(r.Context(), state.EventListOptions{RunID: runID, AfterSequence: lastSequence, Limit: s.cfg.ClientQueueMaxEvents})
-			if err != nil {
-				return
-			}
-			for _, event := range events {
-				if err := writeSSEFrame(w, event, s.cfg.RetryMS); err != nil {
-					return
-				}
-				lastSequence = event.Sequence
-			}
-			if len(events) > 0 {
-				flusher.Flush()
-			}
 		case <-heartbeat.C:
+			// Missed events from a dropped subscription are recovered on client
+			// reconnect through Last-Event-ID replay; live delivery uses publisher only.
 			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
 				return
 			}

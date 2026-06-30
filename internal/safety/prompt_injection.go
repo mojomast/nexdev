@@ -1,6 +1,7 @@
 package safety
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -41,4 +42,15 @@ func DetectPromptInjection(text string) []PromptInjectionFinding {
 		}
 	}
 	return findings
+}
+
+// EnforcePromptInjection returns an error when untrusted text contains a
+// high-severity prompt-injection finding.
+func EnforcePromptInjection(text string) error {
+	for _, finding := range DetectPromptInjection(text) {
+		if finding.Severity == "high" {
+			return fmt.Errorf("prompt injection detected (%s): %s", finding.Pattern, finding.Message)
+		}
+	}
+	return nil
 }
