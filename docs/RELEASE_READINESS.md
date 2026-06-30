@@ -1,6 +1,6 @@
 # M19 Release Readiness Handoff
 
-Status: M19 toolchain vulnerability deblocking updated the module, CI, and release workflow to use the fixed Go toolchain `go1.25.11`. The local release gate now passes with `govulncheck` on `PATH`.
+Status: M19 toolchain vulnerability deblocking updated the module, CI, and release workflow to use Go `1.26.4`. The local release gate now passes with `govulncheck` on `PATH`.
 
 ## Commands Run In M19 Worker Environment
 
@@ -13,7 +13,7 @@ Status: M19 toolchain vulnerability deblocking updated the module, CI, and relea
 - `./scripts/e2e_fake_provider.sh` passed.
 - `PATH="/home/mojo/go/bin:$PATH" govulncheck ./...` passed with zero reachable vulnerabilities.
 - `PATH="/home/mojo/go/bin:$PATH" ./scripts/release_check.sh` passed all local release gates.
-- The module and CI/release workflows require Go `1.25.11` through `go.mod` and GitHub Actions setup-go pins.
+- The module and CI/release workflows require Go `1.26.4` through the `go.mod` `go` directive and GitHub Actions setup-go pins.
 
 ## Required Gates
 

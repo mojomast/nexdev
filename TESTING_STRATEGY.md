@@ -66,7 +66,7 @@ Additional recommended commands:
 
 Recommended commands must not be documented as valid until their files exist.
 
-`govulncheck` is a required release gate, but it is an external tool availability requirement rather than product behavior. Install it before running the gate, for example with `go install golang.org/x/vuln/cmd/govulncheck@latest`, and ensure the install directory, commonly `$HOME/go/bin`, is on `PATH`. Release checks use the fixed module-pinned Go toolchain `go1.25.11`; do not suppress vulnerabilities or skip this gate.
+`govulncheck` is a required release gate, but it is an external tool availability requirement rather than product behavior. Install it before running the gate, for example with `go install golang.org/x/vuln/cmd/govulncheck@latest`, and ensure the install directory, commonly `$HOME/go/bin`, is on `PATH`. Release checks use the fixed module Go version and workflow pin `1.26.4`; do not suppress vulnerabilities or skip this gate.
 
 ## 3. Test Layers
 

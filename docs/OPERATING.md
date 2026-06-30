@@ -12,7 +12,7 @@ Run the full local gate with:
 
 The script runs OpenAPI/control-plane contract tests, `go test ./...`, `go test -race ./...`, `go vet ./...`, `go mod verify`, `govulncheck ./...`, and `./scripts/e2e_fake_provider.sh`.
 
-Release checks require the module-pinned fixed Go toolchain from `go.mod` (`toolchain go1.25.11`) and `govulncheck` on `PATH`. If `govulncheck` was installed with `go install`, add the Go install directory, commonly `$HOME/go/bin`, to `PATH` before running the gate. The script fails with exit code `127` if `govulncheck` is unavailable. The script does not install tools and does not run real-provider/network tests.
+Release checks require Go `1.26.4` from the module `go` directive and CI/release workflow pins, plus `govulncheck` on `PATH`. If `govulncheck` was installed with `go install`, add the Go install directory, commonly `$HOME/go/bin`, to `PATH` before running the gate. The script fails with exit code `127` if `govulncheck` is unavailable. The script does not install tools and does not run real-provider/network tests.
 
 ## Optional Real-Provider Smoke
 

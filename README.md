@@ -19,7 +19,7 @@ Current local verification commands:
 
 Release-gate commands that may need environment setup:
 - `go test -race ./...`
-- `govulncheck ./...`, after installing `govulncheck` and making its install directory, commonly `$HOME/go/bin`, available on `PATH`; release checks use the module-pinned fixed Go toolchain `go1.25.11`
+- `govulncheck ./...`, after installing `govulncheck` and making its install directory, commonly `$HOME/go/bin`, available on `PATH`; release checks use the module Go version and workflow pin `1.26.4`
 
 Local control-plane smoke:
 - `nexdev auth token create --role operator --ttl 30d`
