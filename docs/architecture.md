@@ -145,7 +145,7 @@ Current M9 detour behavior:
 - Detour generation uses `provider.StructuredClient` through `provider.SlotPlanDetail` because no dedicated provider slot exists yet. A later provider/config task can add a detour slot if the orchestrator wants separate model routing.
 - Generated detour tasks are validated with local M7-equivalent rules for acceptance criteria, write-task expected files, dependency references, expected-file path shape, and inserted-set cycles. Splicing detects ID conflicts before persistence.
 - Max depth defaults to `3`. Depth exhaustion creates an open `nexdev_blockers` row with reason `detour_depth_exceeded`, marks the trigger task blocked, marks the run blocked, and returns an error rather than silently skipping.
-- Splicing persists new `nexdev_tasks` with deterministic `D<depth>.<seq>` IDs when the provider omits IDs and stable integer `plan_order` values immediately after the trigger when an order gap exists. Dense persisted plans need a state/review follow-up to shift existing task order values safely.
+- Splicing persists new `nexdev_tasks` with deterministic `D<depth>.<seq>` IDs when the provider omits IDs and stable integer `plan_order` values immediately after the trigger. Dense persisted plans are handled by state-owned transactional insertion, which shifts later tasks within the same run and plan version before inserting detour rows.
 - Successful detours mark the trigger task `pending_after_detour`, persist `detour_records.result_json`, and persist a `detour_created` event. Control-plane route/UI and automatic develop resume remain M10/M12 integration work.
 
 ## 6. State Flow
@@ -164,7 +164,8 @@ SQLite is the durable source of truth for:
 - Navigation events.
 - Plan edit events.
 - Auth tokens.
-- Audit/cost records if implemented.
+- Audit log records.
+- Cost ledger records.
 
 Disk artifacts under `.nexdev/artifacts/` are human/agent continuation outputs. They are indexed in SQLite and are not the source of truth for run state.
 
@@ -193,7 +194,7 @@ Current M1 status:
 - The wrapper returns raw response text, attempt count, provider/model metadata, validation errors, and usage metadata exposed by `provider.Response`.
 - `internal/provider.FakeProvider` is a deterministic constructor-only provider for CI and later pipeline tests. It scripts responses by model and prompt matcher, supports invalid-then-repair structured flows through `StructuredClient`, retryable and hard errors, usage metadata, deterministic latency records without sleeping, streaming chunks, model list/discovery, and optional auth-required behavior.
 - The fake provider is not registered in the global provider registry; M6/M16 wiring must opt in explicitly by constructing it and pairing it with a router selection for provider name `fake`.
-- Raw response persistence, provider call event emission, and cost ledger integration remain M14 follow-up work.
+- Provider structured calls can now report redacted usage metadata to an optional recorder; provider call event emission remains follow-up work.
 
 Structured output flow:
 1. Build prompt with trusted/untrusted sections and schema.
@@ -240,24 +241,57 @@ Current M2 logging baseline:
 - `observability.NewLogger` constructs standard `log/slog` loggers with configurable level and JSON or text handlers.
 - A redacting handler wraps the underlying slog handler and applies `internal/safety.RedactSecrets` to log messages, string attributes, grouped string attributes, and attributes attached through `Logger.With` before write.
 - Field helper attributes use the canonical names from `SPEC.md` section 17: `project_id`, `run_id`, `stage`, `task_id`, `provider`, `model`, `event_id`, and `request_id`.
-- OpenTelemetry, runtime instrumentation, metrics, audit logs, and the cost ledger are not implemented in M2. `observability.OpenTelemetryEnabled` is a documented false placeholder until M14 owns OTel/cost/audit integration.
+- OpenTelemetry, runtime instrumentation, metrics, audit logs, and the cost ledger were not implemented in M2. `observability.OpenTelemetryEnabled` remains a false compatibility constant after M14.
+
+Current M14 observability/audit/cost behavior:
+- State migration version `6` adds durable `audit_log` and `cost_ledger` tables. Repository writes scrub string fields and JSON string values before persistence.
+- `Store.PersistEvent` scrubs event payload JSON before insert by decoding, redacting string values, and re-encoding valid JSON.
+- `provider.StructuredClient` accepts an optional `StructuredCallRecorder`; it records redacted provider/model/usage/latency/error metadata and redacts previous raw responses before repair prompts. Prompts are not handed to the recorder.
+- `observability.UsageRecorder` implements the provider recorder hook and persists cost ledger entries plus optional audit records when a state store and project scope are supplied. Correlation can come from `observability.ContextWithCorrelation`; app wiring supplies project/latest-run defaults for app-created provider clients.
+- `controlplane.Authenticator` writes audit records for failed auth, forbidden authorization, and allowed operator/admin control requests when auth is enabled.
+- `observability.ConfigureOTel` is inert when disabled and validates explicit endpoint configuration when enabled. Exporters remain unwired, so normal tests require no network access.
 
 M14 follow-ups:
-- Wire request IDs, event IDs, provider usage, stage/task timings, and control-plane/executor/provider instrumentation through the logger and event/state layers.
-- Add OTel setup only behind explicit config and keep it disabled by default.
-- Add persistent cost/audit behavior only after state/provider usage contracts exist.
+- Pipeline/executor/app boundaries should pass richer request/event/stage/task correlation context into provider calls.
+- Verify/handoff should aggregate `cost_ledger` into `run_summary.json` after those artifacts exist.
+- OTel exporter setup and metrics remain opt-in follow-up work; do not enable network exporters by default.
 
 ## 11. Control Plane Flow
 
 HTTP and MCP calls are adapters over the same services used by local CLI/TUI.
 
-Rules:
-- `GET /health` requires no auth.
-- Observer can read state and streams.
-- Operator can pause/resume/skip/steer/detour/resolve/provider-test.
-- Admin can cancel, mutate config/tasks/tokens, and perform destructive operations.
-- Non-loopback bind without auth fails startup.
-- JSON errors use `ErrorResponse`.
+Current M10 HTTP/SSE/auth behavior:
+- `internal/controlplane.Server` binds route handlers with standard `net/http` ServeMux patterns and validates startup safety with `RequireAuthForBind`; non-loopback bind without auth fails before a handler is exposed.
+- `GET /health` is unauthenticated. When auth is enabled, observer/operator/admin routes use opaque bearer tokens stored as HMAC-SHA256 hashes in the project SQLite `auth_tokens` table. Middleware rejects missing, expired, revoked, or insufficient-role tokens and updates `last_used_at` only after successful auth.
+- M14 audit integration records failed authentication, forbidden authorization, and allowed operator/admin control requests to the durable `audit_log` table when auth is enabled and project state is available.
+- Read routes load durable state from SQLite: `/status` summarizes the selected project/run, stage runs, current executor task when wired, and open blockers; `/plan` groups persisted `nexdev_tasks`; `/artifacts` lists indexed artifacts; `/events` lists persisted events with replay limits.
+- `/runs/{run_id}/stream` replays persisted events, honors `Last-Event-ID`, emits SSE frames with persisted event IDs/types/data, and sends non-durable heartbeat comments rather than invented event envelopes. It also subscribes to the persisted-event publisher and polls durable state so events persisted by domain services such as M9 detour are visible without provider calls from routes.
+- `POST /detour` is an authenticated operator route and delegates to the M9 `WorkflowManager.Request`/compatible requester interface. The route does not generate tasks, reorder plans, or call providers directly.
+- Pause/resume/skip/steer/cancel routes are thin adapters over an injected `executor.Control` when app wiring supplies one; otherwise they return a contract-shaped service-unavailable error. Task mutation, config mutation, provider-test, and MCP call dispatch remain later worker surfaces.
+- JSON errors use `ErrorResponse` and redact string detail before response.
+
+Current M11 MCP behavior:
+- `internal/controlplane/mcp.go` is the M11 MCP-compatible adapter. It exposes static descriptors for the required `nexdev_*` tools and keeps `/mcp/tools` as an authenticated observer read surface.
+- `POST /mcp/call` authenticates at observer level, resolves the requested tool's own role, and then applies the same role hierarchy used by HTTP. Tool descriptions and schemas are static code/manifest data and cannot expand permissions at runtime.
+- Read-only MCP tools load durable SQLite state through the same store-backed status, plan, artifact, and blocker/event-aware helpers used by HTTP. MCP does not invent non-durable event semantics.
+- Workflow tools delegate to existing service boundaries: run start through `RunStarter`, pause/resume/cancel/steer through `executor.Control`, detour through `DetourRequester.Request` or `RequestForBlocker`, and blocker resolution through the durable blocker repository. The MCP layer does not call providers, execute shell commands, or implement task ordering.
+- Provider testing is exposed only through an optional injected `ProviderTester`; when it is not wired, the MCP tool returns a structured not-implemented/service error rather than calling providers directly.
+- Legacy `internal/mcp` remains an imported geoffrussy-era stdio package and is not the M11 control-plane surface. M11 disables its tool/resource registration so the imported provider/executor handlers are not exposed through CLI stdio MCP; future cleanup should retire or adapt it over the M11 service boundary.
+
+Current M12 CLI/app lifecycle behavior:
+- `internal/app` now owns the narrow CLI/server lifecycle used by M12. It resolves project root/config/state paths, opens the project-local SQLite store at `.nexdev/state.db` by default, creates a persistent project ID file, ensures a project row exists, and acquires `.nexdev/run/project.lock` for `nexdev serve`.
+- `nexdev serve` constructs the existing M10 `controlplane.Server` with config-derived bind/auth/CORS/SSE settings, project ID, durable state store, and the M11 MCP routes registered by that server. Startup still fails before listening for non-loopback bind without auth.
+- The server secret for opaque bearer tokens is project-local under `.nexdev/run/server.secret` with `0600` permissions. `nexdev auth token create|list|revoke` uses the M10 token generation/hash helpers and M3 token repository; plaintext is printed only at creation time.
+- If a latest run exists, app wiring supplies M8 `executor.Control` to the server for pause/resume/skip/cancel/steer. App wiring also constructs the M9 `detour.WorkflowManager` with a provider router/structured client from config, so detour requests stay behind the existing detour/provider boundaries. Provider-test and full run-start services remain explicit service-unavailable/deferred paths until their app services are assigned; CLI control commands use `--control-url` rather than mutating those domains directly.
+- Local read commands such as `status --json`, `events`, `provider list`, and `artifacts list` construct the same server handler in-process. Remote mode sends HTTP requests only when `--control-url` is supplied and uses `--token` or `NEXDEV_CONTROL_TOKEN` for bearer auth.
+
+Current M13 terminal TUI behavior:
+- `internal/tui` now owns a Nexdev-specific terminal control model separate from the imported legacy interview/review screens. It depends on a narrow `tui.Client` interface and reads status, events, plan/tasks, blockers, artifacts, redacted config, and provider summaries from an HTTP/control-plane client or an in-process control-plane handler client.
+- `nexdev tui` launches the terminal client only. With `--control-url`, it talks to the remote control-plane URL with the configured bearer token. Without `--control-url`, it opens the project runtime, acquires the project lock, builds the same M10/M11 in-process server handler, and calls through that handler rather than reading or mutating state directly.
+- The TUI exposes overview, event stream, plan/task, blocker/detour, and artifact/config/provider summary views with refresh and navigation keys. Plan editing, richer steering text input, provider testing, and provider/config mutation are shown as deferred/disabled states unless their services are wired.
+- Pause/resume, skip, detour, steer, and cancel actions call the injected client/service path. The TUI does not call providers, execute shell commands, implement task ordering, or own pipeline state. Normal quit exits the terminal client without cancelling a run; cancel and skip require explicit confirmation.
+- Displayed event/task/blocker/artifact text is treated as untrusted and passed through secret redaction/control-character scrubbing before rendering.
+- Embedded web UI files remain unimplemented and are intentionally not created by M13 terminal TUI work.
 
 ## 12. Development Parallelism
 

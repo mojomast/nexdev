@@ -29,6 +29,12 @@ func NewResourceHandlers(configManager *config.Manager, projectRoot string) *Res
 
 // RegisterAllResources registers all Geoffrussy resources with the registry
 func (h *ResourceHandlers) RegisterAllResources(registry *ResourceRegistry) error {
+	// Legacy stdio MCP is disabled until rebuilt over the M11 control-plane
+	// services. Resource reads must use the durable/authenticated surface first.
+	if !LegacyStdioRegistrationEnabled {
+		return nil
+	}
+
 	resources := []struct {
 		resource Resource
 		handler  ResourceHandler

@@ -170,7 +170,7 @@ Rules:
 
 Authoritative migration location:
 - `internal/state/migrations.go`
-- Status: M1-C5 additive skeleton exists as migration version `4` using the imported geoffrussy migration runner. M3 repositories now cover events, runs, stage runs, artifacts, auth tokens, steering events, detour records, navigation events, and plan edit events. The M3 task/blocker follow-up adds migration version `5` for Nexdev-specific task and blocker tables while preserving legacy geoffrussy `tasks` and `blockers`.
+- Status: M1-C5 additive skeleton exists as migration version `4` using the imported geoffrussy migration runner. M3 repositories now cover events, runs, stage runs, artifacts, auth tokens, steering events, detour records, navigation events, and plan edit events. The M3 task/blocker follow-up adds migration version `5` for Nexdev-specific task and blocker tables while preserving legacy geoffrussy `tasks` and `blockers`. M14 adds migration version `6` for audit and cost ledger records.
 
 Required SQLite behavior:
 - Foreign keys on.
@@ -194,6 +194,8 @@ Required tables:
 - `auth_tokens`
 - `nexdev_tasks`
 - `nexdev_blockers`
+- `audit_log`
+- `cost_ledger`
 
 Required event indexes:
 - Unique `(run_id, sequence)`.
@@ -218,6 +220,11 @@ Task/blocker follow-up indexes:
 - `idx_nexdev_tasks_phase`
 - `idx_nexdev_blockers_run_status`
 - `idx_nexdev_blockers_task`
+- `idx_audit_log_project_created`
+- `idx_audit_log_run_created`
+- `idx_audit_log_action`
+- `idx_cost_ledger_run_created`
+- `idx_cost_ledger_provider_model`
 
 Migration policy:
 - Preserve existing geoffrussy tables where possible.
@@ -228,10 +235,11 @@ Current compatibility evidence:
 - The migration runner remains the imported custom runner; goose/sqlc are not adopted in M1.
 - Existing geoffrussy tables are preserved and Nexdev tables are added in migration version `4`.
 - Migration version `5` keeps legacy geoffrussy `tasks` and `blockers` intact and adds `nexdev_tasks` plus `nexdev_blockers` instead of adapting incompatible legacy columns.
+- Migration version `6` adds `audit_log` and `cost_ledger` without changing existing state tables.
 - `Store.open` enables foreign keys and WAL and now configures `PRAGMA busy_timeout = 5000` before migrations run.
 
 Event repository behavior:
-- `Store.PersistEvent` accepts `contract.EventEnvelope`, requires caller-provided `event_id`, `run_id`, `type`, and `source`, validates JSON payload, stores empty payloads as `{}`, and writes to the version `4` `events` table.
+- `Store.PersistEvent` accepts `contract.EventEnvelope`, requires caller-provided `event_id`, `run_id`, `type`, and `source`, validates JSON payload, stores empty payloads as `{}`, recursively redacts JSON string values before insert, and writes to the version `4` `events` table.
 - If `Sequence` is zero, the store allocates the next per-run sequence inside a retrying transaction after locking the parent run row. If `Sequence` is provided, it must equal the next sequence for that run; duplicate, stale, or gap sequences return `ErrEventSequenceConflict`.
 - Events are loaded by joining `events` to `runs` so returned envelopes include `ProjectID`. Returned envelopes always set `ContractVersion` to `contract.EventContractVersion`.
 - Event timestamps are stored as UTC RFC3339Nano text in `created_at` and returned as UTC `time.Time` values.
@@ -257,6 +265,11 @@ Task and blocker repository behavior:
 - Task creation validates required IDs/title/phase, requires acceptance criteria, stores slice fields as JSON arrays, rejects self-dependencies, and checks dependency IDs already exist in the same run. Full DAG cycle validation remains M7 planning/review behavior.
 - `Store.CreateNexdevBlocker`, `ListNexdevBlockers`, and `ResolveNexdevBlocker` persist blocker ID, project/run/task scope, reason, description, status, resolution, metadata JSON, created timestamp, and resolved timestamp. Blocker lists order by `created_at` then ID and can filter by run, task, and status.
 - Blocker task scope references `nexdev_tasks`, not legacy geoffrussy `tasks`. Project/run foreign keys enforce valid Nexdev scope while permitting run-level blockers with no task ID.
+
+Audit and cost repository behavior:
+- `Store.CreateAuditRecord` and `ListAuditRecords` persist durable audit rows for security/control-plane/operator-sensitive actions. Required fields are ID, project ID, source, action, outcome, and created time. Optional fields include run ID, request ID, actor, actor role, resource type, resource ID, and details JSON.
+- `Store.CreateCostRecord` and `ListCostRecords` persist provider usage/cost ledger rows with project/run/stage/task scope, provider/model, prompt/completion/total tokens, optional estimated USD, currency, retry count, latency, metadata JSON, and created time.
+- Audit details, cost metadata, and event payloads are decoded as JSON and recursively redacted for string values before persistence. Scalar string columns are also redacted before write.
 
 Auxiliary follow-ups:
 - M7 planning writes validated `TaskSpec` rows through `CreateNexdevTask` with pending status after plan validation/versioning and owns DAG cycle checks plus write-task expected-file checks. Review finalization still owns approval semantics, plan edit events, and any version increment after human mutation.
@@ -497,6 +510,8 @@ Implemented defaults:
 - `security.command_execution_default: deny`, `network_default: deny`, `tool_policy_file: .nexdev/tool_policy.yaml`, `reject_symlink_escape: true`.
 - Repo analysis excludes `.git/**`, `node_modules/**`, `vendor/**`, `dist/**`, `build/**`, and `.nexdev/**`.
 - Provider primary defaults to the spec placeholder and every required stage slot has an empty placeholder that downstream provider routing can inherit from primary.
+- Cost defaults are enabled with `currency: USD`, `max_run_usd: 25`, `max_stage_usd: 8`, `require_approval_above_usd: 5`, `estimate_before_hivemind: true`, and `stop_on_unknown_price: false`.
+- Observability defaults use `log_level: info`, `json_logs: false`, and `otel.enabled: false` with service name `nexdev`.
 
 Required precedence, lowest to highest:
 1. Built-in defaults.
@@ -514,6 +529,8 @@ Config validation:
 - Unsafe CORS/profile validation remains a follow-up for M2 auth/security wiring.
 - Shell command execution default is deny.
 - Network access default is deny.
+- `cost.currency` is required when cost tracking is enabled.
+- `observability.otel.endpoint` is required when OTel is explicitly enabled.
 
 Path safety baseline:
 - `internal/safety/paths.go`
@@ -536,9 +553,9 @@ Open decision:
 
 ## 10. Auth Contract
 
-Authoritative skeleton:
+Authoritative implementation:
 - `internal/controlplane/auth.go`
-- Status: M1-C8 role and route metadata helpers exist. No HTTP middleware, token repository, token generation, token hashing, or storage behavior is implemented by this skeleton.
+- Status: M10 adds HTTP auth middleware, opaque token generation/hash helpers, HMAC-SHA256 token hashing with server secret, constant-time auth through hash lookup, role enforcement, expiry/revocation rejection, and `last_used_at` touch after successful authentication. Token command UX remains a CLI follow-up.
 
 Roles:
 - `none` for unauthenticated routes such as `GET /health`.
@@ -560,7 +577,7 @@ Route role metadata:
 Default token model:
 - Opaque bearer tokens.
 - Random 32+ bytes, base64url encoded.
-- Store hash only.
+- Store hash only using `HashBearerToken(server_secret, token)`.
 - Store role, name, created time, expiry, revocation, last-used time.
 - Constant-time compare.
 - `TokenRecord` mirrors the migration version `4` `auth_tokens` schema at the contract level only.
@@ -574,6 +591,44 @@ Optional stateless tokens:
 
 Implemented M1-C8 tests:
 - `go test ./internal/controlplane` checks role hierarchy, required route coverage, mutating route role expectations, MCP per-tool delegation, and remote-bind auth requirement behavior.
+
+Implemented M10 auth/control-plane tests:
+- `go test ./internal/controlplane` covers loopback no-auth read routes, non-loopback no-auth startup rejection, bearer-token observer access, operator-only detour access, forbidden observer mutation, and JSON error responses from middleware paths.
+
+## 10.1 HTTP/SSE Control-Plane Runtime Contract
+
+Authoritative implementation:
+- `internal/controlplane/server.go`
+- `internal/controlplane/routes.go`
+- `internal/controlplane/events.go`
+- `internal/controlplane/sse.go`
+- `internal/controlplane/errors.go`
+
+Implemented routes:
+- `GET /health` returns `{ok, api_contract_version}` without auth.
+- `GET /status` returns a durable project/run snapshot from `runs`, `stage_runs`, `nexdev_blockers`, and optional injected executor current task.
+- `GET /plan` returns grouped persisted `nexdev_tasks` for the selected run.
+- `GET /artifacts` returns SQLite-indexed artifact rows.
+- `GET /events` returns persisted events, supports `run_id`, `after_sequence`, and `type` filtering, and applies the configured replay cap.
+- `GET /runs/{run_id}/stream` replays persisted events after `Last-Event-ID` and streams subsequent persisted events as SSE frames.
+- `POST /detour` delegates to an injected M9-compatible detour requester, normally `detour.WorkflowManager`; the route does not call providers directly and does not implement independent task ordering.
+- `POST /pause`, `/resume`, `/skip`, `/steer`, and `/cancel` delegate to injected `executor.Control` when wired by app/CLI lifecycle.
+- `POST /blockers/{blocker_id}/resolve` updates the durable blocker repository and optionally asks the injected executor to resume.
+
+Current route deferrals:
+- `POST /runs` requires an app-level runner service and returns service-unavailable unless `RunStarter` is injected.
+- Task mutation routes, config mutation, provider test, and MCP call dispatch remain later worker surfaces and currently return `ErrorResponse` with `not_implemented` or `service_unavailable`.
+- Generated OpenAPI server types remain deferred; handlers are manually bound to the existing `api/openapi.yaml` contract.
+
+SSE behavior:
+- Frames use `id`, `event`, `retry`, and `data` with the persisted `contract.EventEnvelope` JSON.
+- `Last-Event-ID` maps through the state event repository and unknown IDs return `event_not_found`.
+- Heartbeats are SSE comments (`: heartbeat`) so the control plane does not invent non-durable event envelopes.
+- `Publisher.Publish` persists through `Store.PersistEvent` before broadcasting the stored envelope to bounded subscriber queues.
+- Streams also poll durable state after the last sent sequence so events persisted by domain services outside the publisher path are still delivered.
+
+Implemented M10 SSE/control-plane tests:
+- `go test ./internal/controlplane` covers persisted replay after `Last-Event-ID`, frame shape, no `[DONE]` sentinel, detour route delegation, and detour-created event persistence through the delegated requester.
 
 ## 11. MCP Contract
 
@@ -597,6 +652,23 @@ Rules:
 - Input schemas match OpenAPI where possible.
 - Same role checks as HTTP.
 - MCP stdio mode must not execute arbitrary shell strings.
+
+Authoritative M11 implementation:
+- `internal/controlplane/mcp.go`
+- `api/mcp_tools.json`
+
+Implemented M11 behavior:
+- `GET /mcp/tools` returns the static checked-in descriptor set with each tool's required role and JSON-compatible input schema.
+- `POST /mcp/call` accepts `{ "name": string, "arguments": object }`, rejects unknown arguments and wrong JSON types, resolves the tool role, and enforces the HTTP role hierarchy before dispatch.
+- Observer tools read durable state: status snapshots, persisted task plans, and SQLite-indexed artifact metadata.
+- Operator/admin tools delegate to already-defined services: `RunStarter`, `executor.Control`, M9-compatible `DetourRequester`, `ResolveNexdevBlocker`, and optional `ProviderTester`.
+- `nexdev_detour` calls `RequestForBlocker` when `blocker_id` is supplied or `Request` for manual detours. It does not call providers directly and does not implement independent task ordering.
+- Results use `{tool,is_error,result,error}`. Error objects use `error_code`, `message`, and `details`, and string content is redacted through `internal/safety.RedactSecrets`.
+
+M11 deferrals:
+- `nexdev_get_artifact` returns durable artifact index metadata only; artifact file content serving remains a later artifact/API path-safety task because the control-plane server is not yet wired with a validated project root reader.
+- Provider-test execution requires an injected `ProviderTester`; MCP returns a structured not-implemented/service-unavailable error when that service is absent.
+- Stdio MCP mode in legacy `internal/mcp` is not the M11 surface. M11 disables legacy tool/resource registration to avoid exposing imported provider/executor handlers; later CLI/stdin MCP work must adapt to the control-plane service boundary before exposure.
 
 ## 12. Artifact Contract
 
@@ -634,9 +706,12 @@ Authoritative first-wave Go structs:
 
 ## 13. Observability Contract
 
-Authoritative M2 logging baseline:
+Authoritative implementation:
 - `internal/observability/logger.go`
-- Status: structured logging construction and redaction wrapper exist. OTel, metrics, runtime instrumentation, audit logs, and cost ledger behavior remain M14 follow-up work.
+- `internal/observability/context.go`
+- `internal/observability/cost.go`
+- `internal/observability/otel.go`
+- Status: structured logging construction and redaction wrapper exist. M14 adds correlation context, provider usage/cost recording, audit/cost state integration, and disabled-by-default OTel configuration. Runtime metrics and OTel exporters remain follow-up work.
 
 Logger behavior:
 - Uses standard `log/slog`.
@@ -654,9 +729,15 @@ Required field names:
 - `event_id`
 - `request_id`
 
+M14 behavior:
+- `observability.ContextWithCorrelation` carries project/run/stage/task/request/actor metadata across provider/stage/control boundaries when callers provide it.
+- `observability.UsageRecorder` implements `provider.StructuredCallRecorder` and writes redacted `cost_ledger` rows plus optional `audit_log` rows through the state repositories.
+- `provider.StructuredClient` invokes the optional recorder with redacted provider/model/usage/latency/error metadata and does not pass prompts to the recorder. Previous raw responses are redacted before repair prompts.
+- `observability.ConfigureOTel` is a no-op when disabled. If enabled without an endpoint it fails validation; exporter/network setup remains unwired and is not required by tests.
+
 Current deferrals:
-- OpenTelemetry is disabled/not implemented in M2; `observability.OpenTelemetryEnabled` is false as a documented placeholder.
-- Provider usage/cost persistence and audit logs require M3 state and M4 provider usage metadata before M14 implementation.
+- Runtime metrics and OTel exporters are not wired; future work must keep them disabled by default and network-free in normal tests.
+- Run summary cost aggregation waits for verify/handoff artifacts.
 
 ## 14. CLI Contract
 
@@ -667,6 +748,34 @@ Rules:
 - `--control-url` switches to HTTP client mode.
 - `nexdev steer` maps to `POST /steer` semantics.
 - `nexdev init --import-devussy PATH` is required by migration plan.
+
+Current M12 implementation:
+- Root command identity and global flags are now `nexdev`-oriented and include `--project-dir`, `--config`, `--state-dir`, `--no-tui`, `--json`, `--log-level`, `--profile`, `--control-url`, and `--token`.
+- `nexdev serve` opens project-local state, acquires `.nexdev/run/project.lock`, builds the M10/M11 control-plane server, and releases the lock during shutdown.
+- `nexdev auth token create|list|revoke` manages project-local opaque bearer tokens. Token hashes are stored in SQLite; plaintext token values are returned only from `create`.
+- `nexdev status --json`, `events`, `provider list`, and `artifacts list` read through the same control-plane handler locally or through HTTP when `--control-url` is set.
+- `nexdev pause`, `resume --control-url`, `cancel`, `steer`, `detour`, `blockers resolve`, and `provider test` are client adapters over HTTP control-plane routes. Without `--control-url`, mutating control commands fail with a structured CLI error instead of touching state directly.
+- `nexdev run`, `verify`, `history`, and `artifacts open` are present in the command tree. `history` reads persisted events; `run`, `verify`, and artifact content opening return explicit deferred errors unless a wired control-plane service is supplied for `run`.
+- Full `run --fake-provider --no-tui --json`, verify/handoff commands, and provider-test service execution remain later milestone work because their lower-level services are not yet complete. Detour generation is wired through M9 `WorkflowManager` and the provider router/structured wrapper; it will fail through that service path if provider credentials/configuration are unavailable.
+
+## 14.1 Terminal TUI Contract
+
+Authoritative implementation:
+- `internal/tui/nexdev.go`
+- `internal/cli/m12_commands.go` for the `nexdev tui` command entry.
+
+Implemented M13 behavior:
+- The TUI is terminal-only. No `web/static` files or embedded web UI are part of this milestone.
+- `tui.Client` is the only TUI service boundary. It supports `Snapshot`, `Pause`, `Resume`, `Skip`, `Steer`, `RequestDetour`, and `Cancel`. Implementations include an HTTP control-plane client and an in-process handler client over the existing M10 server handler.
+- The snapshot model covers run overview/status, event stream data, plan/tasks, blockers/detours, artifacts, redacted config, and provider summary data. Missing provider/test/config mutation services render as deferred or disabled states.
+- Views are selected with `1` through `5`: overview, events, plan/tasks, blockers/detours, and artifacts/config/providers. `r` refreshes, `p` pauses/resumes through the client, `s` sends a deferred steering action through the client, `d` requests detour through the client, `k` asks for skip confirmation, `c` asks for cancel confirmation, and `q` quits only the terminal client.
+- Quit does not cancel or kill the run. Destructive cancel and task skip require `y` confirmation before invoking the client action.
+- Rendered run/task/artifact/event/blocker text is redacted with `internal/safety.RedactSecrets` and control-character scrubbing before display.
+- The TUI must not call providers directly, execute shell commands, implement task ordering, or mutate pipeline state outside the injected service/client path.
+
+Implemented M13 tests:
+- `go test ./internal/tui` covers snapshot rendering, key navigation, disabled service actions, secret redaction, normal quit behavior, and explicit confirmation for cancel/skip.
+- `go test ./internal/cli` covers command registration including `tui`.
 
 ## 15. Contract Tests
 
@@ -693,6 +802,8 @@ Implemented first-wave tests:
 - `go test ./internal/controlplane` validates auth role hierarchy, route metadata coverage, MCP per-tool delegation, and remote-bind auth requirement behavior.
 - `go test ./internal/testutil` validates M1 black-box fixture contracts for temp projects, deterministic time/IDs, event recording, and auth role fixtures.
 - `go test ./internal/observability` validates M2 logging construction, redaction, level filtering, JSON/text modes, and required field helper keys.
+- `go test ./internal/controlplane` validates M11 MCP descriptors, per-tool role enforcement, input validation, state read surfaces, detour/blocker/control delegation, and redacted structured MCP errors.
+- `go test ./internal/app ./internal/cli` validates M12 lifecycle project/lock setup, remote-bind safety via config/app startup, hash-only token storage, command registration, token-create output, and CLI mutation error handling when no control-plane URL is supplied.
 
 ## 16. Test Fixture Contract
 

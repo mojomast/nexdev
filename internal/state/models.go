@@ -180,6 +180,43 @@ type NexdevBlocker struct {
 	ResolvedAt  *time.Time
 }
 
+// AuditRecord is a durable, redacted record of security/control-plane/operator-sensitive actions.
+type AuditRecord struct {
+	ID           string
+	ProjectID    string
+	RunID        string
+	RequestID    string
+	Actor        string
+	ActorRole    string
+	Source       string
+	Action       string
+	ResourceType string
+	ResourceID   string
+	Outcome      string
+	Details      json.RawMessage
+	CreatedAt    time.Time
+}
+
+// CostRecord is one durable provider usage/cost ledger entry.
+type CostRecord struct {
+	ID               string
+	ProjectID        string
+	RunID            string
+	Stage            string
+	TaskID           string
+	Provider         string
+	Model            string
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	EstimatedUSD     *float64
+	Currency         string
+	RetryCount       int
+	LatencyMS        int64
+	Metadata         json.RawMessage
+	CreatedAt        time.Time
+}
+
 const (
 	NexdevTaskStatusPending            = "pending"
 	NexdevTaskStatusRunning            = "running"

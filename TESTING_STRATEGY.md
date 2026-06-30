@@ -25,6 +25,8 @@ Current valid commands include:
 - `go test ./internal/controlplane`
 - `go test ./internal/testutil`
 - `go test ./internal/observability`
+- `go test ./internal/app ./internal/cli`
+- `go test ./internal/tui`
 - `go test ./...`
 - `go vet ./...`
 - `go mod verify`
@@ -207,6 +209,11 @@ Required as commands become implemented:
 - `nexdev auth token create`
 - `nexdev auth token list`
 - `nexdev auth token revoke`
+
+Current M12 CLI/app coverage:
+- `go test ./internal/app` covers project-local runtime opening, `.nexdev/run/project.lock` acquire/release for server lifecycle, project row creation, non-loopback/no-auth startup rejection through config/app validation, and hash-only token persistence.
+- `go test ./internal/cli` covers M12 command registration, root command identity, token create JSON output, and control mutation commands refusing to bypass the HTTP control-plane service when `--control-url` is absent.
+- Remaining CLI coverage: `serve` live listener smoke, remote `events --follow` SSE client, full `run --fake-provider --no-tui --json`, provider-test service execution, verify/handoff commands, and E2E fake-provider script.
 
 ### 3.8 Fake Provider and Fake Worker Tests
 
@@ -409,6 +416,9 @@ Current fixture test command:
 - Admin can cancel/config/task-mutate/token-manage.
 - JSON errors use `ErrorResponse`.
 - Remote bind without auth fails.
+- Current M10 coverage: `go test ./internal/controlplane` covers loopback/no-auth health and status, startup rejection for non-loopback/no-auth, bearer-token observer/operator role behavior, forbidden observer mutation, SSE persisted replay with `Last-Event-ID`, SSE frame shape/no `[DONE]`, and detour route delegation with persisted `detour_created` event evidence.
+- Remaining M10/M12/M15 coverage: CLI token create/list/revoke commands, slow-client overflow event behavior under stress, full OpenAPI response validation, app-level `nexdev serve` wiring, task/config/provider mutation route service wiring, MCP per-tool dispatch, auth failure audit/rate limiting, and token rotation UX.
+- Current M12 app/CLI coverage adds project-local `nexdev serve` lifecycle wiring, project lock acquire/release, token create/list/revoke command paths, and CLI mutation error handling. Remaining M12/M15 coverage: live listener smoke, remote SSE follow, slow-client overflow stress, provider-test service wiring, and full OpenAPI response validation.
 
 ### Observability
 
@@ -417,7 +427,8 @@ Current fixture test command:
 - Log messages and string attributes are redacted through `internal/safety.RedactSecrets` before write.
 - Field helpers emit the canonical `SPEC.md` section 17 keys.
 - Current M2 coverage: `go test ./internal/observability` validates redaction for messages, attrs, grouped/with attrs, level filtering, JSON/text construction, level parsing, and required field helper keys.
-- Remaining M14 coverage: OTel disabled-by-default wiring after config integration, request/event correlation, provider usage/cost records, audit logs, and cross-boundary no-secret-leak integration tests for logs/events/artifacts/prompts/API.
+- Current M14 coverage: `go test ./internal/observability` validates disabled-by-default OTel behavior, endpoint validation when enabled, correlation-aware provider usage recording, cost estimation, cost ledger persistence, audit record persistence, and metadata redaction. `go test ./internal/state` validates audit/cost migrations and repositories plus event-payload redaction before persistence. `go test ./internal/provider` validates structured-call usage recorder hooks and redacted raw-response handoff. `go test ./internal/controlplane` validates auth failure/forbidden/operator control audit records and recursive error-detail redaction coverage through existing error paths.
+- Remaining M14/M15 coverage: broader no-secret-leak integration tests across logs/events/artifacts/prompts/API/error responses/audit/cost using hostile fixture repos, cost guard enforcement before parallel launches, run-summary cost aggregation, and optional OTel exporter tests that remain disabled and network-free by default.
 
 ### MCP
 
@@ -425,6 +436,17 @@ Current fixture test command:
 - Tool schemas validate.
 - MCP calls enforce same role checks as HTTP.
 - MCP stdio mode does not shell-execute arbitrary strings.
+- Current M11 coverage: `go test ./internal/controlplane` validates the required `nexdev_*` tool descriptor set, static roles, schema rejection of unknown/wrong-typed inputs, observer/operator/admin per-tool role enforcement, durable status/plan/artifact metadata reads, detour `RequestForBlocker` delegation, steering source `mcp`, blocker resolution, optional provider-test redaction, and structured MCP error shape.
+- Current compatibility check: `go test ./internal/mcp` still passes for the legacy imported package and verifies that legacy stdio tool/resource registration is disabled until adapted to the M11 service boundary.
+- Remaining MCP coverage: app/CLI stdio wiring after legacy cleanup, artifact file content reads through a validated project-root reader, provider-test service integration, and end-to-end MCP over a served control plane.
+
+### Terminal TUI
+
+- The TUI must be tested as a client over fake/control-plane service abstractions, not by owning pipeline state.
+- Current M13 coverage: `go test ./internal/tui` covers model refresh/update, required view rendering against fake run state, key navigation, disabled/deferred action status, redaction of secret-like event/blocker text, normal quit not cancelling a run, and explicit confirmation before skip/cancel actions invoke the client.
+- Current CLI coverage: `go test ./internal/cli` verifies the `tui` command is registered with the required command tree.
+- Remaining TUI coverage: live terminal smoke against `nexdev serve`, richer text input for steering/detour/review edits once those service paths exist, and end-to-end remote TUI auth behavior.
+- Web UI remains deferred and has no test surface in M13.
 
 ### Verify and Handoff
 

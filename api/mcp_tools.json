@@ -1,0 +1,76 @@
+{
+  "tools": [
+    {
+      "name": "nexdev_cancel",
+      "role": "admin",
+      "description": "Cancel the active executor through the executor control service.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"run_id":{"type":"string","description":"Optional run ID."},"reason":{"type":"string","description":"Cancel reason."}}}
+    },
+    {
+      "name": "nexdev_detour",
+      "role": "operator",
+      "description": "Request a detour through the existing detour workflow manager or blocker requester.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"project_id":{"type":"string","description":"Project ID."},"run_id":{"type":"string","description":"Run ID."},"trigger_task_id":{"type":"string","description":"Trigger task ID for manual detour."},"blocker_id":{"type":"string","description":"Existing blocker ID to request a blocker detour."},"reason":{"type":"string","description":"Detour reason."},"context":{"type":"string","description":"Bounded detour context."}}}
+    },
+    {
+      "name": "nexdev_get_artifact",
+      "role": "observer",
+      "description": "Read artifact metadata by ID or by kind/path from the durable artifact index.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"project_id":{"type":"string","description":"Optional project ID."},"run_id":{"type":"string","description":"Optional run ID."},"artifact_id":{"type":"string","description":"Artifact ID."},"kind":{"type":"string","description":"Artifact kind."},"path":{"type":"string","description":"Project-relative artifact path."}}}
+    },
+    {
+      "name": "nexdev_get_plan",
+      "role": "observer",
+      "description": "Read the current persisted devplan for a run.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"project_id":{"type":"string","description":"Optional project ID."},"run_id":{"type":"string","description":"Optional run ID."}}}
+    },
+    {
+      "name": "nexdev_get_status",
+      "role": "observer",
+      "description": "Read the durable project and active-run status snapshot.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"project_id":{"type":"string","description":"Optional project ID."},"run_id":{"type":"string","description":"Optional run ID."}}}
+    },
+    {
+      "name": "nexdev_list_artifacts",
+      "role": "observer",
+      "description": "List SQLite-indexed artifacts for a project and optional run.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"project_id":{"type":"string","description":"Optional project ID."},"run_id":{"type":"string","description":"Optional run ID."},"kind":{"type":"string","description":"Optional artifact kind filter."}}}
+    },
+    {
+      "name": "nexdev_pause",
+      "role": "operator",
+      "description": "Pause the active executor through the executor control service.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"run_id":{"type":"string","description":"Optional run ID."},"reason":{"type":"string","description":"Pause reason."}}}
+    },
+    {
+      "name": "nexdev_provider_test",
+      "role": "operator",
+      "description": "Invoke the configured provider-test service when it is wired; never calls providers directly from MCP.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","description":"Provider name."}},"required":["name"]}
+    },
+    {
+      "name": "nexdev_resolve_blocker",
+      "role": "operator",
+      "description": "Resolve a durable blocker and optionally resume executor controls.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"blocker_id":{"type":"string","description":"Blocker ID."},"resolution":{"type":"string","description":"Resolution text."},"resume":{"type":"boolean","description":"Resume after resolving."},"run_id":{"type":"string","description":"Optional run ID."}},"required":["blocker_id","resolution"]}
+    },
+    {
+      "name": "nexdev_resume",
+      "role": "operator",
+      "description": "Resume the active executor through the executor control service.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"run_id":{"type":"string","description":"Optional run ID."}}}
+    },
+    {
+      "name": "nexdev_start_run",
+      "role": "operator",
+      "description": "Start a Nexdev pipeline run through the configured run service.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"project_dir":{"type":"string","description":"Optional project directory."},"prompt":{"type":"string","description":"Optional run prompt."},"from_stage":{"type":"string","description":"Optional starting stage."},"stage":{"type":"string","description":"Optional single stage."},"yes":{"type":"boolean","description":"Assume conservative defaults for unanswered questions."},"cheap":{"type":"boolean","description":"Prefer cheap execution profile."},"brrrr":{"type":"boolean","description":"Prefer maximum safe parallelism profile."}}}
+    },
+    {
+      "name": "nexdev_steer",
+      "role": "operator",
+      "description": "Add durable steering context through the executor steering service.",
+      "input_schema": {"type":"object","additionalProperties":false,"properties":{"run_id":{"type":"string","description":"Run ID."},"task_id":{"type":"string","description":"Optional task ID."},"message":{"type":"string","description":"Steering message."}},"required":["message"]}
+    }
+  ]
+}

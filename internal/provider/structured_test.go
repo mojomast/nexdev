@@ -129,6 +129,31 @@ func TestCallStructuredCapturesUsageMetadata(t *testing.T) {
 	}
 }
 
+func TestCallStructuredRecordsRedactedProviderUsage(t *testing.T) {
+	recorder := &structuredCallRecorderStub{}
+	client := newStructuredTestClient(&scriptedProvider{responses: []string{`{"name":"ok","token":"sk-1234567890abcdef"}`}, inputTokens: 7, outputTokens: 11})
+	client.Recorder = recorder
+
+	var got map[string]string
+	result, err := client.CallStructured(context.Background(), SlotInterview, "return json", &got, StructuredOptions{AllowUnknownFields: true})
+	if err != nil {
+		t.Fatalf("CallStructured failed: %v", err)
+	}
+	if result.Usage.TotalTokens != 18 {
+		t.Fatalf("usage mismatch: %#v", result.Usage)
+	}
+	if len(recorder.records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(recorder.records))
+	}
+	record := recorder.records[0]
+	if record.PromptTokens != 7 || record.CompletionTokens != 11 || record.TotalTokens != 18 || record.Attempts != 1 {
+		t.Fatalf("record usage mismatch: %#v", record)
+	}
+	if strings.Contains(record.RawResponse, "sk-1234567890abcdef") || !strings.Contains(record.RawResponse, "[REDACTED]") {
+		t.Fatalf("record raw response was not redacted: %q", record.RawResponse)
+	}
+}
+
 func TestCallStructuredRedactsProviderErrors(t *testing.T) {
 	client := newStructuredTestClient(&scriptedProvider{err: errors.New("api_key=sk-ant-supersecretsecret")})
 
@@ -161,6 +186,15 @@ type scriptedProvider struct {
 	outputTokens int
 	prompts      []string
 	models       []string
+}
+
+type structuredCallRecorderStub struct {
+	records []StructuredCallRecord
+}
+
+func (r *structuredCallRecorderStub) RecordStructuredCall(ctx context.Context, record StructuredCallRecord) error {
+	r.records = append(r.records, record)
+	return nil
 }
 
 func (p *scriptedProvider) Name() string { return "primary" }

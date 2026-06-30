@@ -31,8 +31,22 @@ func TestDefaultNexdevConfig(t *testing.T) {
 	if got := cfg.Provider.Stages["develop"]; got != (ProviderSelection{}) {
 		t.Fatalf("develop provider stage = %+v, want empty placeholder", got)
 	}
+	if !cfg.Cost.Enabled || cfg.Cost.Currency != "USD" || cfg.Cost.MaxRunUSD != 25 {
+		t.Fatalf("cost defaults mismatch: %+v", cfg.Cost)
+	}
+	if cfg.Observability.OTel.Enabled || cfg.Observability.OTel.ServiceName != "nexdev" {
+		t.Fatalf("observability defaults mismatch: %+v", cfg.Observability)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("default validation failed: %v", err)
+	}
+}
+
+func TestNexdevConfigOTelEnabledRequiresEndpoint(t *testing.T) {
+	cfg := DefaultNexdevConfig()
+	cfg.Observability.OTel.Enabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "observability.otel.endpoint") {
+		t.Fatalf("Validate() error = %v, want OTel endpoint error", err)
 	}
 }
 

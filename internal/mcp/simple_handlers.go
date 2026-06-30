@@ -29,6 +29,12 @@ func NewSimpleToolHandlers(configManager *config.Manager, projectRoot string) *S
 
 // RegisterBasicTools registers basic Geoffrussy tools with the registry
 func (h *SimpleToolHandlers) RegisterBasicTools(registry *ToolRegistry) error {
+	// Legacy stdio MCP is not the Nexdev M11 surface. Do not register imported
+	// Geoffrussy tools here because they bypass control-plane auth/services.
+	if !LegacyStdioRegistrationEnabled {
+		return nil
+	}
+
 	tools := []struct {
 		tool    Tool
 		handler ToolHandler

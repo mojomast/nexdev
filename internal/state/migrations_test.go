@@ -401,6 +401,8 @@ func TestMigrationManager_NexdevContractTablesAndIndexes(t *testing.T) {
 		"auth_tokens",
 		"nexdev_tasks",
 		"nexdev_blockers",
+		"audit_log",
+		"cost_ledger",
 	}
 
 	for _, table := range tables {
@@ -427,6 +429,11 @@ func TestMigrationManager_NexdevContractTablesAndIndexes(t *testing.T) {
 		"idx_nexdev_tasks_phase",
 		"idx_nexdev_blockers_run_status",
 		"idx_nexdev_blockers_task",
+		"idx_audit_log_project_created",
+		"idx_audit_log_run_created",
+		"idx_audit_log_action",
+		"idx_cost_ledger_run_created",
+		"idx_cost_ledger_provider_model",
 	}
 
 	for _, index := range indexes {

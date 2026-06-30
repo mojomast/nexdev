@@ -1,10 +1,20 @@
 package controlplane
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/mojomast/nexdev/internal/state"
 )
 
 // Role is the control-plane authorization level required by OpenAPI route metadata.
@@ -63,6 +73,167 @@ var RouteRoles = map[RouteKey]Role{
 }
 
 var ErrRemoteBindRequiresAuth = errors.New("non-loopback bind requires auth")
+
+var auditIDCounter atomic.Uint64
+
+type authContextKey struct{}
+
+type AuthStore interface {
+	GetAuthTokenByHash(ctx context.Context, tokenHash string) (*state.AuthToken, error)
+	TouchAuthTokenLastUsed(ctx context.Context, tokenID string, lastUsedAt time.Time) error
+}
+
+type AuditStore interface {
+	CreateAuditRecord(ctx context.Context, record *state.AuditRecord) error
+}
+
+type Authenticator struct {
+	store     AuthStore
+	audits    AuditStore
+	projectID string
+	secret    []byte
+	now       func() time.Time
+	newID     func(prefix string) string
+}
+
+type AuthenticatorConfig struct {
+	Store        AuthStore
+	AuditStore   AuditStore
+	ProjectID    string
+	ServerSecret []byte
+	Now          func() time.Time
+	NewID        func(prefix string) string
+}
+
+type AuthenticatedActor struct {
+	TokenID string
+	Role    Role
+	Name    string
+}
+
+func NewAuthenticator(cfg AuthenticatorConfig) (*Authenticator, error) {
+	if cfg.Store == nil {
+		return nil, fmt.Errorf("auth store is required")
+	}
+	if len(cfg.ServerSecret) == 0 {
+		return nil, fmt.Errorf("server secret is required")
+	}
+	now := cfg.Now
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	newID := cfg.NewID
+	if newID == nil {
+		newID = func(prefix string) string { return fmt.Sprintf("%s_%d", prefix, auditIDCounter.Add(1)) }
+	}
+	return &Authenticator{store: cfg.Store, audits: cfg.AuditStore, projectID: cfg.ProjectID, secret: append([]byte(nil), cfg.ServerSecret...), now: now, newID: newID}, nil
+}
+
+func GenerateOpaqueToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate auth token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func HashBearerToken(serverSecret []byte, token string) string {
+	mac := hmac.New(sha256.New, serverSecret)
+	mac.Write([]byte(token))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (a *Authenticator) Authenticate(ctx context.Context, header string) (AuthenticatedActor, error) {
+	token, ok := bearerToken(header)
+	if !ok {
+		return AuthenticatedActor{}, ErrUnauthorized
+	}
+	hash := HashBearerToken(a.secret, token)
+	record, err := a.store.GetAuthTokenByHash(ctx, hash)
+	if err != nil {
+		return AuthenticatedActor{}, ErrUnauthorized
+	}
+	if !hmac.Equal([]byte(record.TokenHash), []byte(hash)) {
+		return AuthenticatedActor{}, ErrUnauthorized
+	}
+	now := a.now().UTC()
+	if record.RevokedAt != nil || (record.ExpiresAt != nil && !record.ExpiresAt.After(now)) {
+		return AuthenticatedActor{}, ErrUnauthorized
+	}
+	role := Role(record.Role)
+	if roleRank(role) == 0 {
+		return AuthenticatedActor{}, ErrForbidden
+	}
+	if err := a.store.TouchAuthTokenLastUsed(ctx, record.ID, now); err != nil {
+		return AuthenticatedActor{}, err
+	}
+	return AuthenticatedActor{TokenID: record.ID, Role: role, Name: record.Name}, nil
+}
+
+func ActorFromContext(ctx context.Context) (AuthenticatedActor, bool) {
+	actor, ok := ctx.Value(authContextKey{}).(AuthenticatedActor)
+	return actor, ok
+}
+
+func withActor(ctx context.Context, actor AuthenticatedActor) context.Context {
+	return context.WithValue(ctx, authContextKey{}, actor)
+}
+
+func bearerToken(header string) (string, bool) {
+	fields := strings.Fields(header)
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") || fields[1] == "" {
+		return "", false
+	}
+	return fields[1], true
+}
+
+func (a *Authenticator) Middleware(required Role, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if required == RoleNone {
+			next.ServeHTTP(w, r)
+			return
+		}
+		actor, err := a.Authenticate(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			a.auditRequest(r, AuthenticatedActor{}, "auth", "failed")
+			writeError(w, r, http.StatusUnauthorized, "unauthorized", "authentication required", nil)
+			return
+		}
+		if !Allows(actor.Role, required) {
+			a.auditRequest(r, actor, "authorize", "forbidden")
+			writeError(w, r, http.StatusForbidden, "forbidden", "insufficient role", nil)
+			return
+		}
+		if roleRank(required) >= roleRank(RoleOperator) {
+			a.auditRequest(r, actor, "control_request", "allowed")
+		}
+		next.ServeHTTP(w, r.WithContext(withActor(r.Context(), actor)))
+	})
+}
+
+func (a *Authenticator) auditRequest(r *http.Request, actor AuthenticatedActor, action, outcome string) {
+	if a.audits == nil || a.projectID == "" || r == nil {
+		return
+	}
+	role := ""
+	if actor.Role != "" {
+		role = string(actor.Role)
+	}
+	_ = a.audits.CreateAuditRecord(r.Context(), &state.AuditRecord{
+		ID:           a.newID("audit"),
+		ProjectID:    a.projectID,
+		RequestID:    requestID(r),
+		Actor:        actor.Name,
+		ActorRole:    role,
+		Source:       "api",
+		Action:       action,
+		ResourceType: "route",
+		ResourceID:   r.Method + " " + r.URL.Path,
+		Outcome:      outcome,
+		Details:      []byte(`{}`),
+		CreatedAt:    a.now().UTC(),
+	})
+}
 
 func RouteRole(method, path string) (Role, bool) {
 	role, ok := RouteRoles[RouteKey{Method: strings.ToUpper(method), Path: path}]

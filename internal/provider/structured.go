@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/mojomast/nexdev/internal/safety"
 )
@@ -46,11 +47,33 @@ type StructuredResult struct {
 	Usage            StructuredUsage
 }
 
+// StructuredCallRecord is the provider-wrapper observability handoff. It omits
+// prompts and carries only redacted response/error metadata plus usage totals.
+type StructuredCallRecord struct {
+	Slot             Slot
+	Provider         string
+	Model            string
+	Attempts         int
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	RawResponse      string
+	ValidationErrors []string
+	Error            string
+	StartedAt        time.Time
+	CompletedAt      time.Time
+}
+
+type StructuredCallRecorder interface {
+	RecordStructuredCall(ctx context.Context, record StructuredCallRecord) error
+}
+
 // StructuredClient adapts the imported geoffrussy Provider.Call(ctx, model,
 // prompt) interface into Nexdev's structured output contract.
 type StructuredClient struct {
 	Router    *Router
 	Providers map[string]Provider
+	Recorder  StructuredCallRecorder
 }
 
 // CallStructured resolves the slot through Router, calls the selected imported
@@ -82,13 +105,16 @@ func (c StructuredClient) CallStructured(ctx context.Context, slot Slot, prompt 
 	result := &StructuredResult{Provider: route.Provider, Model: route.Model}
 	currentPrompt := prompt
 	var lastErr error
+	startedAt := time.Now().UTC()
 
 	for attempt := 0; attempt <= maxRepairAttempts; attempt++ {
 		response, err := provider.Call(ctx, route.Model, currentPrompt)
 		result.Attempts++
 		if err != nil {
 			redacted := safety.RedactSecrets(err.Error())
-			return result, fmt.Errorf("provider %q structured call failed: %s", route.Provider, redacted)
+			wrapped := fmt.Errorf("provider %q structured call failed: %s", route.Provider, redacted)
+			c.recordStructuredCall(ctx, slot, result, startedAt, wrapped)
+			return result, wrapped
 		}
 		if response == nil {
 			lastErr = fmt.Errorf("provider %q returned nil response", route.Provider)
@@ -97,10 +123,10 @@ func (c StructuredClient) CallStructured(ctx context.Context, slot Slot, prompt 
 			result.RawResponse = response.Content
 			result.Usage = usageFromResponse(response)
 			if response.Provider != "" {
-				result.Provider = response.Provider
+				result.Provider = safety.RedactSecrets(response.Provider)
 			}
 			if response.Model != "" {
-				result.Model = response.Model
+				result.Model = safety.RedactSecrets(response.Model)
 			}
 
 			candidate, err := decodeStructured(response.Content, dst, !opts.AllowUnknownFields)
@@ -113,10 +139,14 @@ func (c StructuredClient) CallStructured(ctx context.Context, slot Slot, prompt 
 					result.ValidationErrors = append(result.ValidationErrors, safety.RedactSecrets(err.Error()))
 				} else {
 					dstValue.Elem().Set(candidate.Elem())
+					result.RawResponse = safety.RedactSecrets(result.RawResponse)
+					c.recordStructuredCall(ctx, slot, result, startedAt, nil)
 					return result, nil
 				}
 			} else {
 				dstValue.Elem().Set(candidate.Elem())
+				result.RawResponse = safety.RedactSecrets(result.RawResponse)
+				c.recordStructuredCall(ctx, slot, result, startedAt, nil)
 				return result, nil
 			}
 		}
@@ -124,13 +154,39 @@ func (c StructuredClient) CallStructured(ctx context.Context, slot Slot, prompt 
 		if attempt == maxRepairAttempts {
 			break
 		}
-		currentPrompt = buildRepairPrompt(opts, prompt, result.RawResponse, result.ValidationErrors, attempt+1)
+		currentPrompt = buildRepairPrompt(opts, prompt, safety.RedactSecrets(result.RawResponse), result.ValidationErrors, attempt+1)
 	}
 
 	if lastErr == nil {
 		lastErr = fmt.Errorf("structured output validation failed")
 	}
-	return result, fmt.Errorf("structured output failed after %d attempt(s): %s", result.Attempts, safety.RedactSecrets(lastErr.Error()))
+	result.RawResponse = safety.RedactSecrets(result.RawResponse)
+	wrapped := fmt.Errorf("structured output failed after %d attempt(s): %s", result.Attempts, safety.RedactSecrets(lastErr.Error()))
+	c.recordStructuredCall(ctx, slot, result, startedAt, wrapped)
+	return result, wrapped
+}
+
+func (c StructuredClient) recordStructuredCall(ctx context.Context, slot Slot, result *StructuredResult, startedAt time.Time, err error) {
+	if c.Recorder == nil || result == nil {
+		return
+	}
+	record := StructuredCallRecord{
+		Slot:             slot,
+		Provider:         safety.RedactSecrets(result.Provider),
+		Model:            safety.RedactSecrets(result.Model),
+		Attempts:         result.Attempts,
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		TotalTokens:      result.Usage.TotalTokens,
+		RawResponse:      safety.RedactSecrets(result.RawResponse),
+		ValidationErrors: append([]string(nil), result.ValidationErrors...),
+		StartedAt:        startedAt,
+		CompletedAt:      time.Now().UTC(),
+	}
+	if err != nil {
+		record.Error = safety.RedactSecrets(err.Error())
+	}
+	_ = c.Recorder.RecordStructuredCall(ctx, record)
 }
 
 func decodeStructured(raw string, dst any, rejectUnknown bool) (reflect.Value, error) {

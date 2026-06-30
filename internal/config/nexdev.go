@@ -23,14 +23,16 @@ const (
 // NexdevConfig is the typed v0.1 config surface used by new Nexdev code.
 // It intentionally coexists with the imported geoffrussy Config for M2 compatibility.
 type NexdevConfig struct {
-	Version      string             `yaml:"version"`
-	Profile      string             `yaml:"profile"`
-	Project      ProjectConfig      `yaml:"project"`
-	ControlPlane ControlPlaneConfig `yaml:"controlplane"`
-	Security     SecurityConfig     `yaml:"security"`
-	RepoAnalyze  RepoAnalyzeConfig  `yaml:"repo_analyze"`
-	Provider     ProviderConfig     `yaml:"provider"`
-	Experimental ExperimentalConfig `yaml:"experimental,omitempty"`
+	Version       string              `yaml:"version"`
+	Profile       string              `yaml:"profile"`
+	Project       ProjectConfig       `yaml:"project"`
+	ControlPlane  ControlPlaneConfig  `yaml:"controlplane"`
+	Security      SecurityConfig      `yaml:"security"`
+	RepoAnalyze   RepoAnalyzeConfig   `yaml:"repo_analyze"`
+	Provider      ProviderConfig      `yaml:"provider"`
+	Cost          CostConfig          `yaml:"cost"`
+	Observability ObservabilityConfig `yaml:"observability"`
+	Experimental  ExperimentalConfig  `yaml:"experimental,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -82,6 +84,28 @@ type ProviderSelection struct {
 	APIKeyEnv string `yaml:"api_key_env,omitempty"`
 }
 
+type CostConfig struct {
+	Enabled                 bool    `yaml:"enabled"`
+	Currency                string  `yaml:"currency"`
+	MaxRunUSD               float64 `yaml:"max_run_usd"`
+	MaxStageUSD             float64 `yaml:"max_stage_usd"`
+	RequireApprovalAboveUSD float64 `yaml:"require_approval_above_usd"`
+	EstimateBeforeHivemind  bool    `yaml:"estimate_before_hivemind"`
+	StopOnUnknownPrice      bool    `yaml:"stop_on_unknown_price"`
+}
+
+type ObservabilityConfig struct {
+	LogLevel string     `yaml:"log_level"`
+	JSONLogs bool       `yaml:"json_logs"`
+	OTel     OTelConfig `yaml:"otel"`
+}
+
+type OTelConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Endpoint    string `yaml:"endpoint"`
+	ServiceName string `yaml:"service_name"`
+}
+
 type ExperimentalConfig struct {
 	AllowUnknownConfig bool `yaml:"allow_unknown_config"`
 }
@@ -122,6 +146,8 @@ func DefaultNexdevConfig() NexdevConfig {
 			MaxRetries:      3,
 			RetryBaseMS:     500,
 		},
+		Cost:          CostConfig{Enabled: true, Currency: "USD", MaxRunUSD: 25, MaxStageUSD: 8, RequireApprovalAboveUSD: 5, EstimateBeforeHivemind: true},
+		Observability: ObservabilityConfig{LogLevel: "info", JSONLogs: false, OTel: OTelConfig{Enabled: false, ServiceName: "nexdev"}},
 	}
 }
 
@@ -176,6 +202,12 @@ func (c NexdevConfig) Validate() error {
 	}
 	if c.Security.NetworkDefault != "deny" {
 		return errors.New("security.network_default must default to deny")
+	}
+	if c.Cost.Enabled && c.Cost.Currency == "" {
+		return errors.New("cost.currency is required when cost tracking is enabled")
+	}
+	if c.Observability.OTel.Enabled && c.Observability.OTel.Endpoint == "" {
+		return errors.New("observability.otel.endpoint is required when OTel is enabled")
 	}
 	return nil
 }

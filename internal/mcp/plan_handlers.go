@@ -28,6 +28,12 @@ func NewPlanHandlers(configManager *config.Manager) *PlanHandlers {
 
 // RegisterHandlers registers plan tools with the registry
 func (h *PlanHandlers) RegisterHandlers(registry *ToolRegistry) error {
+	// Legacy stdio MCP is disabled until rebuilt over the M11 control-plane
+	// services. These handlers call providers directly and must not be exposed.
+	if !LegacyStdioRegistrationEnabled {
+		return nil
+	}
+
 	tools := []struct {
 		tool    Tool
 		handler ToolHandler

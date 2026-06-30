@@ -43,6 +43,9 @@ func init() {
 }
 
 func runResume(cmd *cobra.Command, args []string) error {
+	if controlURL != "" {
+		return controlPost(cmd, "/resume", map[string]any{})
+	}
 	// Determine project ID
 	projectID := resumeProjectID
 	cwd, err := os.Getwd()

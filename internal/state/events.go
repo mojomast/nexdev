@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mojomast/nexdev/internal/contract"
+	"github.com/mojomast/nexdev/internal/safety"
 )
 
 var (
@@ -44,6 +45,13 @@ func (s *Store) PersistEvent(ctx context.Context, event contract.EventEnvelope) 
 	if !json.Valid(event.Payload) {
 		return contract.EventEnvelope{}, fmt.Errorf("event payload must be valid JSON")
 	}
+	redactedPayload, err := scrubRawJSONObject(event.Payload)
+	if err != nil {
+		return contract.EventEnvelope{}, fmt.Errorf("failed to scrub event payload: %w", err)
+	}
+	event.Payload = json.RawMessage(redactedPayload)
+	event.Stage = safety.RedactSecrets(event.Stage)
+	event.TaskID = safety.RedactSecrets(event.TaskID)
 
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()

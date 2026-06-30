@@ -6,14 +6,27 @@ It brings together Go execution foundations, a pre-development planning pipeline
 
 ## Current Status
 
-This repository has completed M0 bootstrap and M1 first-wave contract freeze. M0 imported the geoffrussy Go base and set the module path to `github.com/mojomast/nexdev`; M1 C1-C9 froze the initial OpenAPI, event, state migration, stage/status, provider router, executor/steering/detour, auth-role, and test-fixture contracts blocker-free.
+This repository has completed M0 bootstrap, M1 first-wave contract freeze, the first CLI/app lifecycle wiring for the local control plane, and the first terminal TUI control client. M12 provides `nexdev serve`, project-local control-plane token commands, and control-plane client adapters over the M10 HTTP/SSE server and M11 MCP routes. M13 adds `nexdev tui` as a terminal-only client over the same control-plane/state service boundaries.
 
-Product behavior is still incomplete. CLI, control-plane, MCP, TUI, full pipeline execution, fake-provider E2E, and release behavior must not be assumed until their later milestones land.
+Product behavior is still incomplete. Full pipeline execution, verify/handoff, fake-provider E2E, provider-test service wiring, web UI, and release behavior must not be assumed until their later milestones land.
 
 Current verified commands:
 - `go test ./...`
 - `go vet ./...`
 - `go mod verify`
+
+Local control-plane smoke:
+- `nexdev auth token create --role operator --ttl 30d`
+- `nexdev serve`
+- `nexdev status --json`
+- `nexdev tui`
+
+Safe defaults:
+- `nexdev serve` binds to `127.0.0.1:7432` by default.
+- Binding a non-loopback address without auth fails before listening.
+- The project lock is held while `serve` is running and released on shutdown.
+- Token plaintext is printed only when created; SQLite stores only the token hash and metadata.
+- Quitting the TUI exits only the terminal client; cancel/skip actions require explicit confirmation and route through control-plane services.
 
 ## Source Of Truth
 

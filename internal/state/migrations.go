@@ -350,6 +350,65 @@ var migrations = []Migration{
 			DROP TABLE IF EXISTS nexdev_tasks;
 		`,
 	},
+	{
+		Version:     6,
+		Description: "Add Nexdev audit and cost ledger tables",
+		Up: `
+			CREATE TABLE IF NOT EXISTS audit_log (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT,
+				request_id TEXT,
+				actor TEXT,
+				actor_role TEXT,
+				source TEXT NOT NULL,
+				action TEXT NOT NULL,
+				resource_type TEXT,
+				resource_id TEXT,
+				outcome TEXT NOT NULL,
+				details_json TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE TABLE IF NOT EXISTS cost_ledger (
+				id TEXT PRIMARY KEY,
+				project_id TEXT NOT NULL,
+				run_id TEXT,
+				stage TEXT,
+				task_id TEXT,
+				provider TEXT NOT NULL,
+				model TEXT NOT NULL,
+				prompt_tokens INTEGER NOT NULL DEFAULT 0,
+				completion_tokens INTEGER NOT NULL DEFAULT 0,
+				total_tokens INTEGER NOT NULL DEFAULT 0,
+				estimated_usd REAL,
+				currency TEXT NOT NULL DEFAULT 'USD',
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				latency_ms INTEGER NOT NULL DEFAULT 0,
+				metadata_json TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT NOT NULL,
+				FOREIGN KEY (project_id) REFERENCES projects(id),
+				FOREIGN KEY (run_id) REFERENCES runs(id)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_audit_log_project_created ON audit_log(project_id, created_at);
+			CREATE INDEX IF NOT EXISTS idx_audit_log_run_created ON audit_log(run_id, created_at);
+			CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+			CREATE INDEX IF NOT EXISTS idx_cost_ledger_run_created ON cost_ledger(run_id, created_at);
+			CREATE INDEX IF NOT EXISTS idx_cost_ledger_provider_model ON cost_ledger(provider, model);
+		`,
+		Down: `
+			DROP INDEX IF EXISTS idx_cost_ledger_provider_model;
+			DROP INDEX IF EXISTS idx_cost_ledger_run_created;
+			DROP INDEX IF EXISTS idx_audit_log_action;
+			DROP INDEX IF EXISTS idx_audit_log_run_created;
+			DROP INDEX IF EXISTS idx_audit_log_project_created;
+			DROP TABLE IF EXISTS cost_ledger;
+			DROP TABLE IF EXISTS audit_log;
+		`,
+	},
 }
 
 // MigrationManager handles database migrations

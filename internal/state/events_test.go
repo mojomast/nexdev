@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -165,6 +166,26 @@ func TestStorePersistEventRejectsDuplicateEventID(t *testing.T) {
 	}
 	if _, err := store.PersistEvent(context.Background(), testEvent("evt_duplicate", "run_duplicate_id")); err == nil {
 		t.Fatal("expected duplicate event id to fail")
+	}
+}
+
+func TestStorePersistEventRedactsPayloadBeforePersistence(t *testing.T) {
+	store := newEventTestStore(t)
+	seedEventRun(t, store, "proj_events", "run_redact")
+
+	stored, err := store.PersistEvent(context.Background(), contract.EventEnvelope{EventID: "evt_redact", RunID: "run_redact", Type: contract.EventTypePipelineError, Source: contract.EventSourceCore, Payload: []byte(`{"error":"api_key=sk-1234567890abcdef"}`)})
+	if err != nil {
+		t.Fatalf("PersistEvent failed: %v", err)
+	}
+	if got := string(stored.Payload); got == `{"error":"api_key=sk-1234567890abcdef"}` || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("payload was not redacted: %s", got)
+	}
+	loaded, err := store.GetEvent(context.Background(), "evt_redact")
+	if err != nil {
+		t.Fatalf("GetEvent failed: %v", err)
+	}
+	if strings.Contains(string(loaded.Payload), "sk-1234567890abcdef") {
+		t.Fatalf("loaded payload leaked secret: %s", loaded.Payload)
 	}
 }
 

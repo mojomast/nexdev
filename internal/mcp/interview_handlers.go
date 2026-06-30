@@ -23,6 +23,11 @@ func NewInterviewHandlers(configManager *config.Manager) *InterviewHandlers {
 
 // RegisterHandlers registers interview tools with the registry
 func (h *InterviewHandlers) RegisterHandlers(registry *ToolRegistry) error {
+	// Legacy stdio MCP is disabled until rebuilt over the M11 control-plane
+	// services. These handlers call providers directly and must not be exposed.
+	if !LegacyStdioRegistrationEnabled {
+		return nil
+	}
 
 	tools := []struct {
 		tool    Tool

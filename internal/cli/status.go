@@ -37,6 +37,9 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
+	if controlURL != "" || jsonOutput {
+		return localRead(cmd, "/status")
+	}
 	// Get current directory as project root
 	projectRoot, err := os.Getwd()
 	if err != nil {
