@@ -29,7 +29,7 @@ Nexdev is planned as a Go-first single binary with multiple surfaces:
 - SSE event stream.
 - MCP-compatible tool surface.
 
-Core state is owned by one process per project in v0.1. Multi-process concurrent mutation is not supported. Mutating operations must acquire `.nexdev/run/project.lock`.
+Core state is owned by one process per project in v0.1. Multi-process concurrent mutation is not supported. Mutating operations must acquire `.nexdev/run/project.lock`; the M2 helper lives in `internal/git` and is ready for later app/executor wiring.
 
 ## 3. Package Boundaries
 
@@ -176,6 +176,11 @@ Before a task modifies files:
 
 Shell/network tools are denied by default and require explicit policy allowance.
 Command execution and network tool implementations do not exist in this M2 baseline; later executor/verify work must call the policy evaluator before running any command or network-capable tool.
+
+Project lock baseline:
+- `internal/git.ProjectLockPath` resolves `.nexdev/run/project.lock` under the project root through `internal/safety.PathSanitizer`.
+- `internal/git.AcquireProjectLock` creates `.nexdev/run`, atomically creates the lock file with exclusive create semantics, writes pid and UTC acquisition timestamp metadata, and removes the file on release.
+- Existing lock files are treated as held. Stale lock detection, process liveness checks, and integration with app/executor lifecycle are M15/M21 follow-ups.
 
 ## 10. Observability Flow
 

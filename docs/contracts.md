@@ -16,6 +16,16 @@ Precedence:
 
 If this document contradicts `SPEC.md`, `SPEC.md` wins until spec-management updates the spec.
 
+## 1.1 Runtime Path Contract
+
+Project-local runtime lock:
+- Path: `.nexdev/run/project.lock` under the project root.
+- Owner: `internal/git` helper functions.
+- Acquisition: create parent directories, then create the lock file atomically with exclusive-create semantics.
+- Metadata: best-effort pid and UTC acquisition timestamp text.
+- Release: close and remove the lock file.
+- Contention: an existing lock file is reported as held; stale lock recovery is deferred to security hardening.
+
 ## 2. OpenAPI Contract
 
 Authoritative file:
@@ -160,7 +170,7 @@ Rules:
 
 Authoritative migration location:
 - `internal/state/migrations.go`
-- Status: M1-C5 additive skeleton exists as migration version `4` using the imported geoffrussy migration runner. No full Nexdev repositories are implemented yet.
+- Status: M1-C5 additive skeleton exists as migration version `4` using the imported geoffrussy migration runner. The M3 event repository is implemented in `internal/state/events.go`; other Nexdev repositories remain follow-up work.
 
 Required SQLite behavior:
 - Foreign keys on.
@@ -209,6 +219,19 @@ Current compatibility evidence:
 - The migration runner remains the imported custom runner; goose/sqlc are not adopted in M1.
 - Existing geoffrussy tables are preserved and Nexdev tables are added in migration version `4`.
 - `Store.open` enables foreign keys and WAL and now configures `PRAGMA busy_timeout = 5000` before migrations run.
+
+Event repository behavior:
+- `Store.PersistEvent` accepts `contract.EventEnvelope`, requires caller-provided `event_id`, `run_id`, `type`, and `source`, validates JSON payload, stores empty payloads as `{}`, and writes to the version `4` `events` table.
+- If `Sequence` is zero, the store allocates the next per-run sequence inside a retrying transaction after locking the parent run row. If `Sequence` is provided, it must equal the next sequence for that run; duplicate, stale, or gap sequences return `ErrEventSequenceConflict`.
+- Events are loaded by joining `events` to `runs` so returned envelopes include `ProjectID`. Returned envelopes always set `ContractVersion` to `contract.EventContractVersion`.
+- Event timestamps are stored as UTC RFC3339Nano text in `created_at` and returned as UTC `time.Time` values.
+- `Store.ListEvents` supports replay by `run_id` after a sequence, after `Last-Event-ID` through `AfterEventID`, or both. `Store.EventSequenceForID` provides the explicit `Last-Event-ID` to sequence mapping for later SSE handlers.
+- `Limit` is optional and intended for later control-plane replay caps such as `controlplane.sse.replay_max_events`.
+
+M10 SSE follow-ups:
+- Broadcast only the envelope returned from `PersistEvent`, not the caller's pre-persist envelope, so subscribers see the durable sequence and UTC timestamp.
+- Map HTTP `Last-Event-ID` to `EventListOptions.AfterEventID`, enforce configured replay limits, and handle `ErrEventNotFound` as the control-plane replay policy defines.
+- Keep heartbeat, per-client queues, slow-client closure, and SSE frame formatting in `internal/controlplane`; the state repository only owns durable event persistence and replay queries.
 
 ## 5. Stage Contract
 
@@ -549,6 +572,7 @@ Implemented first-wave tests:
 - `go test ./internal/executor ./internal/detour ./internal/steering` validates M1-C7 executor, detour, and steering interface contracts while preserving imported package behavior.
 - `go test ./internal/pipeline` validates stage/status/prerequisite contracts.
 - `go test ./internal/state` validates migration version `4`, required table/index presence, seeded geoffrussy-compatible migration, event sequence uniqueness, foreign-key enforcement, WAL, and busy timeout.
+- `go test ./internal/state` also validates M3 event repository persistence/load, monotonic per-run allocation, independent run sequences, replay after sequence and event ID, unsafe caller sequence rejection, duplicate event ID failure, and concurrent publishers.
 - `go test ./internal/provider` validates router slot resolution, primary inheritance, and unknown slot/provider errors.
 - `go test ./internal/controlplane` validates auth role hierarchy, route metadata coverage, MCP per-tool delegation, and remote-bind auth requirement behavior.
 - `go test ./internal/testutil` validates M1 black-box fixture contracts for temp projects, deterministic time/IDs, event recording, and auth role fixtures.

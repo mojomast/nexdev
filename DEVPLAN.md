@@ -1096,6 +1096,19 @@ Spec obligations:
 
 ### 5.15 Git Integration
 
+Status: M2 project lock helper verified on 2026-06-30. Stage/task commit helpers, changed-file manifests, and optional worker worktree strategy remain later Git work.
+
+Evidence for M2-PROJECT-LOCK:
+- `internal/git/project_lock.go` defines `.nexdev/run/project.lock` path resolution through `internal/safety.PathSanitizer`.
+- `AcquireProjectLock` creates the runtime parent directory, atomically creates the lock file with `O_EXCL`, writes pid and UTC timestamp metadata, rejects a second acquisition while held, and removes the lock on release.
+- Stale lock detection is intentionally deferred; existing lock files are treated as held until M15 hardening defines recovery behavior.
+- Evidence commands: `go test ./internal/git` passed; `go test ./...` passed.
+
+Next action guidance:
+- M3/M5/M8/M10 app, pipeline, executor, and control-plane workers should acquire this helper before mutating project-local state and release it during lifecycle shutdown.
+- M15 security hardening should add stale-lock/process-liveness policy, race-hardening review around symlink swaps, and broader multi-process/race coverage.
+- Spec section 21 worktree workers remain unimplemented; later Git work should keep default v0.1 execution on the single worktree unless explicitly assigned.
+
 Owner subagent role:
 - Git Worker.
 
@@ -1560,7 +1573,7 @@ Acceptance criteria:
 
 ### M2. Config, Paths, Logging, Security Baseline
 
-Status: in_progress. M2-CONFIG-PATHS, M2-SECURITY-BASELINE, and M2-OBSERVABILITY-LOGGER are verified for config/path/security/logging helper baselines; project lock integration remains pending M2 work.
+Status: verified for M2 helper baselines. M2-CONFIG-PATHS, M2-SECURITY-BASELINE, M2-OBSERVABILITY-LOGGER, and M2-PROJECT-LOCK are verified; app/executor/control-plane integration remains later milestone work.
 
 Evidence for M2-CONFIG-PATHS:
 - `internal/config/nexdev.go` and tests implement typed defaults, profile validation, `auth_required: auto` resolution, remote bind rejection when auth is explicitly disabled, and unknown top-level key rejection with `experimental.allow_unknown_config` override.
@@ -1582,8 +1595,15 @@ Evidence for M2-OBSERVABILITY-LOGGER:
 - Documentation updates are recorded in `docs/architecture.md`, `docs/contracts.md`, and `TESTING_STRATEGY.md`.
 - Verification command: `go test ./internal/observability` passed; `go test ./...` passed.
 
+Evidence for M2-PROJECT-LOCK:
+- `internal/git/project_lock.go` implements `.nexdev/run/project.lock` path resolution, exclusive acquire, pid/timestamp metadata, held-lock detection, and release removal.
+- `internal/git/project_lock_test.go` covers lock path, acquire/release metadata, second-acquire failure, release/reacquire, and symlink escape rejection where symlinks are available.
+- Documentation updates are recorded in `docs/architecture.md`, `docs/contracts.md`, and `TESTING_STRATEGY.md`.
+- Verification command: `go test ./internal/git` passed; `go test ./...` passed.
+
 Next action guidance:
-- Finish remaining M2 project lock path helper if still separate before control-plane/executor integration depends on project-local runtime behavior.
+- M3/M5/M8/M10 workers should wire `internal/git.AcquireProjectLock` into mutating lifecycle paths before control-plane/executor integration depends on project-local runtime behavior.
+- M15 hardening should define stale-lock cleanup/process-liveness policy and add broader multi-process/race coverage for project mutation exclusion.
 - M8/M15 executor/verify/security workers must wire `ToolPolicy` into command and network-capable tool paths before any execution exists, load `.nexdev/tool_policy.yaml` only through an owned policy-loader task, and keep wildcard shell allow rules invalid outside `dev`.
 - M6/M7/M10/M14 workers should route untrusted repo/tool text through `DetectPromptInjection` and emit/surface `security_warning` findings where their domains own events or review output.
 - M10/M14 observability/control-plane/provider workers should construct loggers through `internal/observability`, attach canonical request/event/provider/stage/task fields, apply `RedactSecrets` at event/artifact/prompt/API boundaries, and add integration tests for no secret leakage.
@@ -1620,6 +1640,7 @@ Tests required:
 - Config precedence and unknown-key tests.
 - Profile validation tests.
 - Path traversal/symlink tests.
+- Project lock path/acquire/release tests.
 - Redaction tests.
 - Prompt-injection warning tests.
 
@@ -1639,6 +1660,20 @@ Acceptance criteria:
 - Safety helpers are ready for state/control/executor integration.
 
 ### M3. SQLite State, Migrations, Repositories, Fixtures
+
+Status: in_progress. State Worker B verified the M3 event repository on 2026-06-30; other M3 repositories remain planned.
+
+Evidence for M3-STATE-EVENTS:
+- `internal/state/events.go` implements persisted `contract.EventEnvelope` storage on migration version `4`, transactional per-run sequence allocation, caller-sequence conflict rejection, UTC RFC3339Nano timestamp storage/load, event ID to sequence mapping, and replay queries after sequence or event ID.
+- `internal/state/events_test.go` covers persist/load, monotonic sequence per run, independent sequences across runs, replay after sequence/event ID, unsafe sequence conflicts, duplicate event IDs, and concurrent publishers.
+- Documentation updates are recorded in `docs/contracts.md` and `TESTING_STRATEGY.md`.
+- Verification command: `go test ./internal/state` passed.
+
+Next action guidance:
+- State Worker C should implement run/stage/artifact repositories against the existing version `4` schema without changing event repository behavior.
+- State Worker D should implement auth/steering/detour/plan-edit repositories and keep `auth_tokens` aligned with the M1 role/token contract.
+- M10 SSE/control-plane work should call `Store.PersistEvent` before broadcast and replay with `Store.ListEvents` using `AfterEventID` for `Last-Event-ID`.
+- M10 should decide HTTP behavior for unknown `Last-Event-ID` values and enforce configured replay caps at the control-plane layer, not in the state repository.
 
 Purpose:
 - Build durable SQLite state foundation with event log and required repositories.
@@ -2664,14 +2699,15 @@ This matrix is updated as implementation proceeds. M0 and M1 first-wave evidence
 | PROD-001 | Product | Local-first Go single-binary coding harness | M0-M19 | Foundation | `cmd/nexdev`, imported geoffrussy CLI base | `go test ./...`, `go vet ./...`; CLI/E2E later | README, architecture | in_progress | M0 created buildable binary path; product behavior still contract/feature work |
 | BASE-001 | Source synthesis | Fork/import geoffrussy and preserve provider/state/navigation/executor/git | M0 | Foundation | repo-wide imported source | `go test ./...`, `go vet ./...` | architecture | verified | Imported geoffrussy at `e29f8e7649584585a93d8fc8ac9123036fcaf38e`; planning docs preserved |
 | STAGE-001 | Stage graph | Implement canonical stage graph and prerequisites | M1/M5 | Pipeline | `internal/pipeline` | `go test ./internal/pipeline`; runner tests later | architecture; contracts follow-up | in_progress | M1-C3 verified contract constants, status transitions, prerequisite snapshot rules, and import-cycle-safe interfaces; durable runner/resumption remains M5 |
-| STATE-001 | SQLite | Durable SQLite state with WAL/FK/busy timeout | M3 | State | `internal/state` | `go test ./internal/state`; repository/concurrency tests later | contracts | in_progress | M1-C5 migration skeleton verified; repositories and full M3 behavior pending |
-| EVENT-001 | SSE/events | Persisted event log, monotonic per run | M3/M10 | State/Control | `internal/state`, `internal/controlplane` | event/SSE tests | contracts/API | in_progress | Events table and uniqueness exist; allocation/replay repositories pending |
+| STATE-001 | SQLite | Durable SQLite state with WAL/FK/busy timeout | M3 | State | `internal/state` | `go test ./internal/state`; remaining repository tests later | contracts; testing | in_progress | M1-C5 migration skeleton verified; M3 event repository verified; run/stage/artifact/auth/steering/detour/plan-edit repositories pending |
+| EVENT-001 | SSE/events | Persisted event log, monotonic per run | M3/M10 | State/Control | `internal/state/events.go`, `internal/controlplane` later | `go test ./internal/state`; SSE tests later | contracts/API; testing | in_progress | M3 event repository persists envelopes, allocates per-run sequences transactionally, maps `Last-Event-ID` to sequence, and replays after sequence/event ID; SSE broadcast/heartbeat/slow-client behavior remains M10 |
 | API-001 | Control plane | Required HTTP routes from OpenAPI | M1/M10 | Control | `api/openapi.yaml`, `internal/controlplane` | `go test ./internal/contract`; handler tests later | contracts/API | in_progress | OpenAPI skeleton and role metadata exist; handlers/codegen pending |
 | AUTH-001 | Auth | Opaque bearer tokens with roles/expiry/revocation | M3/M10 | Auth | `internal/controlplane/auth.go`; state + controlplane later | `go test ./internal/controlplane`; full auth matrix later | security/contracts | in_progress | M1-C8 role hierarchy, route metadata, token record skeleton, MCP per-tool delegation, and remote-bind helper verified; token repository/hash/middleware behavior pending |
 | MCP-001 | MCP | MCP tools as thin wrappers over control plane | M11 | MCP | `internal/controlplane/mcp.go` | MCP tests | contracts/API | planned | Same role checks |
 | PROVIDER-001 | Provider | Preserve registry and route by stage | M1/M4 | Provider | `internal/provider/router.go`; imported provider registry | `go test ./internal/provider`; structured/fake tests later | architecture; contracts | in_progress | M1-C6 verified slot routing and primary inheritance; structured wrapper/fake provider remain M4 |
 | STRUCT-001 | Structured outputs | Strict decode, semantic validate, repair/reject | M4/M6 | Provider/Pipeline | `internal/contract/model_outputs.go`; provider + pipeline later | `go test ./internal/contract`; schema repair tests later | contracts | in_progress | First-wave inert structs exist; validation/repair behavior pending |
-| SECURITY-001 | Tool/path safety | Deny shell by default, path/symlink policy | M2/M15 | Security | `internal/config`, `internal/safety` | `go test ./internal/config ./internal/safety`, `go test ./internal/safety`; security fixtures later | architecture; contracts; testing | in_progress | M2 config/path and security helper baselines verified; shell/network execution is not implemented; policy loading/enforcement integration, non-logging redaction boundaries, prompt-warning events, file locks, expected-file checks, and M15 fixtures remain follow-up |
+| SECURITY-001 | Tool/path safety | Deny shell by default, path/symlink policy | M2/M15 | Security | `internal/config`, `internal/safety`, `internal/git` | `go test ./internal/config ./internal/safety`, `go test ./internal/safety`, `go test ./internal/git`; security fixtures later | architecture; contracts; testing | in_progress | M2 config/path, security helper, and project lock baselines verified; shell/network execution is not implemented; policy loading/enforcement integration, non-logging redaction boundaries, prompt-warning events, stale lock recovery, expected-file checks, and M15 fixtures remain follow-up |
+| LOCK-001 | Runtime paths | Single mutating process project lock | M2/M15 | Git/Security | `internal/git/project_lock.go` | `go test ./internal/git`; race/multi-process lifecycle tests later | architecture; contracts; testing | implemented | `.nexdev/run/project.lock` helper resolves through path sanitizer, acquires with exclusive create, writes pid/timestamp metadata, rejects held locks, and releases by removing the file; app/executor lifecycle wiring and stale-lock recovery remain follow-up |
 | OBS-001 | Observability | Structured slog baseline with redaction and canonical fields | M2/M14 | Observability | `internal/observability` | `go test ./internal/observability`; integration/no-leak/OTel/cost tests later | architecture; contracts; testing | in_progress | M2 logging baseline verified with JSON/text construction, level filtering, redacted messages/attrs, and field helpers; OTel, metrics, audit logs, runtime instrumentation, and cost ledger remain M14 |
 | STEER-001 | Steering | Durable steering events influence prompt context only | M8 | Executor | `internal/steering/contracts.go` | `go test ./internal/steering`; persistence/prompt tests later | contracts | in_progress | M1-C7 source/message/context contracts exist; durable state and prompt integration remain M8 |
 | DETOUR-001 | Detour | Blocker/manual detour creates minimal spliced tasks | M9 | Detour | `internal/detour/contracts.go` | `go test ./internal/detour`; splice/generation tests later | architecture/contracts | in_progress | M1-C7 interfaces and depth contract exist; provider generation and durable splicing remain M9 |

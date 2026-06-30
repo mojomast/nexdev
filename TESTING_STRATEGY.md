@@ -16,6 +16,7 @@ Current baseline after M0/M1 first-wave work:
 Current valid commands include:
 - `go test ./internal/contract`
 - `go test ./internal/config ./internal/safety`
+- `go test ./internal/git`
 - `go test ./internal/safety`
 - `go test ./internal/pipeline`
 - `go test ./internal/state`
@@ -63,6 +64,7 @@ Required package-level tests:
 - Config defaults, precedence, unknown-key rejection, profile validation.
 - Path sanitizer clean/absolute/root checks.
 - Symlink escape rejection.
+- Project lock path, acquire/release, contention, reacquire, and symlink escape rejection.
 - Deny glob and expected-file enforcement.
 - Redaction of API keys, bearer tokens, passwords, private keys, SSH keys, `.env` values, and known secret patterns.
 - Auth token hashing, constant-time compare, expiry, revocation, role checks.
@@ -169,7 +171,10 @@ Required checks:
 
 Current M1-C5 coverage:
 - `go test ./internal/state` covers empty migration to latest, idempotency through the existing migration tests, seeded geoffrussy-compatible migration from version `3` to Nexdev version `4`, required Nexdev table/index existence, event `(run_id, sequence)` uniqueness, foreign-key enforcement, WAL mode, and configured busy timeout.
-- Full event repository concurrency and bounded transaction contention tests remain M3 work.
+
+Current M3 event repository coverage:
+- `go test ./internal/state` covers persisted event load with contract version and UTC RFC3339Nano timestamp behavior, monotonic per-run sequence allocation, independent sequences across runs, replay after sequence, replay after event ID for `Last-Event-ID` mapping, unsafe caller-provided sequence rejection, duplicate event ID failure, and concurrent publishers on one run.
+- M10 SSE tests still need to cover persist-before-broadcast at the publisher boundary, HTTP `Last-Event-ID` reconnect behavior, heartbeat frames, bounded client queues, and slow-client overflow handling.
 
 ### 3.7 CLI Smoke Tests
 
@@ -237,6 +242,9 @@ Required coverage:
 - Project lock prevents multiple mutating processes.
 - SQLite busy retry behavior under write contention.
 - Worker assignment detects file overlap when parallel worktrees are enabled.
+
+Current M2 project lock coverage:
+- `go test ./internal/git` covers `.nexdev/run/project.lock` resolution, exclusive acquisition, pid/timestamp metadata, second-acquire failure while held, release/reacquire behavior, and symlink escape rejection where the platform permits symlinks.
 
 Run `go test -race ./...` as a full gate. If a package is excluded, record the reason in `DEVPLAN.md` and spec-management handoff.
 
@@ -308,7 +316,8 @@ Current fixture test command:
 - Existing geoffrussy-compatible state migrates.
 - Required tables/indexes exist.
 - WAL/FK/busy timeout enabled.
-- Event sequence is monotonic.
+- Event sequence is monotonic per run under serial and concurrent publishers.
+- Event replay supports after-sequence and after-event-ID queries for later `/events` and SSE reconnect handlers.
 
 ### Provider
 
