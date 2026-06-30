@@ -44,7 +44,6 @@ durable SQLite state, HTTP/SSE control plane, and MCP-compatible tools.`,
 		},
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
-	rootCmd.SetHelpCommand(&cobra.Command{Use: "help [command]", Hidden: true})
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&projectDir, "project-dir", "", "project directory (default: current directory)")
@@ -81,6 +80,7 @@ durable SQLite state, HTTP/SSE control plane, and MCP-compatible tools.`,
 	rootCmd.AddCommand(providerCmd)
 	rootCmd.AddCommand(artifactsCmd)
 	rootCmd.AddCommand(doctorCmd)
+	rootCmd.SetHelpCommand(&cobra.Command{Use: "__help [command]", Hidden: true})
 }
 
 var versionCmd = &cobra.Command{

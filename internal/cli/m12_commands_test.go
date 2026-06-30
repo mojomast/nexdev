@@ -43,17 +43,24 @@ func TestRootHelpShowsOnlySpecCommandsAndNoGeoffrussyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	help := out.String()
+	commandsSection := help
+	if parts := strings.SplitN(commandsSection, "Flags:", 2); len(parts) == 2 {
+		commandsSection = parts[0]
+	}
 	want := []string{"init", "run", "develop", "verify", "status", "plan", "review", "navigate", "detour", "steer", "pause", "resume", "cancel", "blockers", "provider", "events", "artifacts", "history", "config", "auth", "serve", "doctor"}
 	for _, name := range want {
-		if !strings.Contains(help, "  "+name) {
+		if !strings.Contains(commandsSection, "  "+name+" ") {
 			t.Fatalf("help missing spec command %q:\n%s", name, help)
 		}
 	}
-	mustNotContain := []string{"interview", "design", "validate", "stats", "quota", "checkpoint", "rollback", "mcp-server", "tui", "version", ".geoffrussy", "geoffrussy"}
+	mustNotContain := []string{"interview", "design", "validate", "stats", "quota", "checkpoint", "rollback", "mcp-server", "tui", "version", "help"}
 	for _, text := range mustNotContain {
-		if strings.Contains(help, text) {
+		if strings.Contains(commandsSection, "  "+text+" ") {
 			t.Fatalf("help contains legacy text %q:\n%s", text, help)
 		}
+	}
+	if strings.Contains(help, ".geoffrussy") || strings.Contains(help, "geoffrussy") {
+		t.Fatalf("help contains legacy state text:\n%s", help)
 	}
 }
 

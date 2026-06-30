@@ -116,13 +116,7 @@ func getAPIKey(providerName string) (string, error) {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	if flagValidateOnly {
-		return runValidateOnly()
-	}
-	if flagNonInteractive {
-		return runInitNonInteractive(cmd, args)
-	}
-	return runInitInteractive(cmd, args)
+	return runNexdevInit(cmd, args)
 }
 
 // runValidateOnly checks that at least one provider has a valid API key
