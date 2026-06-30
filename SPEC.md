@@ -2,7 +2,7 @@
 
 **Status:** Implementation contract draft  
 **Target date:** June 2026  
-**Primary implementation language:** Go 1.24+  
+**Primary implementation language:** Go 1.26.4  
 **Repository strategy:** Fork `mojomast/geoffrussy`, add Nexdev packages, keep backward-compatible state migrations where possible.  
 **Product thesis:** Nexdev is a single-binary, local-first, observable, steerable coding harness that turns a project request into reviewed, tested, auditable code by combining geoffrussy's Go execution/state foundation, devussy's pre-development planning pipeline, and nexussy's live control-plane and operator ergonomics.
 
@@ -1064,7 +1064,7 @@ controlplane:
 
 ### 12.2 API Contract
 
-`api/openapi.yaml` is authoritative. Go server types SHOULD be generated with `oapi-codegen`.
+`api/openapi.yaml` is authoritative. Go API types are generated with `oapi-codegen` into `api/generated/nexdev_api.gen.go`; generation drift is checked by a gated contract test and release checks.
 
 Core endpoints:
 
@@ -1983,8 +1983,12 @@ Command result schema:
 ```go
 type CommandResult struct {
     Command      string `json:"command"`
+    Passed       bool   `json:"passed"`
+    PolicyDenied bool   `json:"policy_denied"`
     ExitCode     int    `json:"exit_code"`
     TimedOut     bool   `json:"timed_out"`
+    Attempts     int    `json:"attempts"`
+    OutputTruncated bool `json:"output_truncated"`
     StdoutTail   string `json:"stdout_tail"`
     StderrTail   string `json:"stderr_tail"`
     OutputSHA256 string `json:"output_sha256"`
@@ -1992,6 +1996,8 @@ type CommandResult struct {
     CompletedAt  string `json:"completed_at"`
 }
 ```
+
+`changed_files.json` uses the shared `ChangedFile` artifact contract: `path`, `status`, `sha256`, `byte_size`, and `owning_tasks`. Git rename detection may use an internal `old_path` while parsing `git diff`, but v0.1 artifact JSON does not expose `old_path` until the shared contract is extended through a later contract update.
 
 ---
 

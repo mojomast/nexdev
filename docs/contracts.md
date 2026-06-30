@@ -1,6 +1,6 @@
 # Nexdev Contracts Plan
 
-**Status:** M18 stabilization reflects contract behavior implemented through M17 and keeps release-readiness gaps explicit.
+**Status:** Final stabilization reflects contract behavior implemented through TASK-10 and keeps explicit deferrals visible.
 **Canonical source:** `SPEC.md`.  
 **Rule:** Once created, `api/openapi.yaml`, migrations, generated API types, and schema files are contract artifacts and must stay synchronized with this document.
 
@@ -80,8 +80,9 @@ OpenAPI role metadata:
 - Every operation includes `x-nexdev-role` with `none`, `observer`, `operator`, `admin`, or `per-tool` for `POST /mcp/call`.
 
 Current codegen status:
-- Generated API code is intentionally deferred until the codegen tool path is settled for M1 integration.
-- Contract tests currently parse `api/openapi.yaml` with `gopkg.in/yaml.v3` and verify route/role coverage and common schema presence.
+- `api/generated/nexdev_api.gen.go` is generated from `api/openapi.yaml` with `oapi-codegen`.
+- `make generate` regenerates checked-in API types.
+- `go test ./internal/contract` validates route/role/schema coverage; `NEXDEV_CHECK_CODEGEN=1 go test ./internal/contract` also checks generated-code drift.
 
 ## 3. Event Contract
 
@@ -251,6 +252,10 @@ M10 SSE follow-ups:
 - Map HTTP `Last-Event-ID` to `EventListOptions.AfterEventID`, enforce configured replay limits, and handle `ErrEventNotFound` as the control-plane replay policy defines.
 - Keep heartbeat, per-client queues, slow-client closure, and SSE frame formatting in `internal/controlplane`; the state repository only owns durable event persistence and replay queries.
 
+Final SSE/follow behavior:
+- `nexdev events --follow` can follow a local in-process publisher or a remote SSE endpoint. Remote follow reconnects with `Last-Event-ID`; JSON mode writes one `EventEnvelope` JSON object per line; context cancellation/SIGINT exits cleanly.
+- HTTP slow-reader stress coverage verifies that bounded subscriber queues drop an unread slow client without blocking fast readers or unbounded memory growth.
+
 Auxiliary state repository behavior:
 - `Store.CreateAuthToken`, `GetAuthToken`, `GetAuthTokenByHash`, `ListAuthTokens`, `RevokeAuthToken`, and `TouchAuthTokenLastUsed` persist only `token_hash` plus role/name/created/expires/revoked/last-used metadata. Token generation, hashing, expiry authorization, and constant-time comparison remain control-plane/auth behavior.
 - `Store.AppendSteeringEvent` and `ListSteeringEvents` preserve message, summary, source, created role, task scope, and UTC timestamp. Prompt context selection, summarization, and safety non-override enforcement remain M8 executor/steering work.
@@ -350,6 +355,8 @@ Required schema-bearing outputs:
 - `CommandResult`
 - `ChangedFile`
 - `RunSummary`
+
+Verify command results include `passed`, `policy_denied`, `attempts`, and `output_truncated` in addition to command, exit, timeout, output tail, digest, and timestamps. Verification commands run only when the shell policy explicitly authorizes the exact command; denied commands are reported with exit code `126` and are not executed.
 
 Rules:
 - Strict decode when configured.
@@ -453,7 +460,7 @@ Optional provider capabilities:
 - Usage metadata.
 
 Current deferrals:
-- Usage/cost persistence and cost ledger integration remain M14 follow-up.
+- Raw response persistence remains a future audit enhancement. Cost ledger integration and run-summary aggregation are implemented for provider usage/cost records.
 
 Fake provider behavior:
 - `internal/provider.FakeProvider` implements the imported geoffrussy `Provider` interface without changing real provider implementations.
@@ -476,6 +483,7 @@ Steering contracts:
 - `internal/steering/contracts.go` defines durable steering `Message`, selected prompt `Context`, source constants, and a minimal store interface.
 - Accepted steering sources are `cli`, `api`, `tui`, and `mcp`.
 - `SafetyPolicyOverrideAllowed` is false. Steering can add operator context but cannot override safety policy, output schema, or task acceptance criteria unless a later admin plan mutation changes the task contract.
+- Prompt context now includes steering after task fields and redacted/truncated artifact context where available. Steering remains additive only and cannot override safety policy.
 
 Detour contracts:
 - `internal/detour/contracts.go` aliases shared `internal/contract.DetourRequest` and `DetourResult` and uses `contract.TaskSpec` for new tasks.
@@ -543,10 +551,10 @@ Security baseline contracts:
 - `internal/safety/policy.go` exposes `DefaultToolPolicy`, `ToolPolicy.Validate(profile)`, `AllowsShellCommand`, `AllowsNetwork`, and `ValidateWritePath`. The default policy allows read/write basics, denies shell and network, denies writes to `.git`, `.env`, private key, PEM, and key-looking files, and rejects wildcard shell allow rules in `trusted-lan` and `ci` profiles.
 - No command execution or network tool implementation is provided by the M2 security baseline.
 
-Remaining M2/M15 security gaps:
-- Redaction is wired into logs, events, API errors, audit/cost records, provider metadata, TUI display, and M15 artifact writes for implemented boundaries; full fake-provider E2E no-leak coverage remains M16/M19 follow-up.
+Remaining security notes:
+- Redaction is wired into logs, events, API errors, audit/cost records, provider metadata, TUI display, artifact writes, fake-provider E2E checks, and hostile security fixtures for implemented boundaries.
 - Hivemind-owned untrusted repo context now emits `security_warning` events when prompt-injection findings are detected and state/run scope is present. Repo analysis/review surfacing can be expanded later.
-- Tool policy loading from `.nexdev/tool_policy.yaml`, verify command execution, output caps, controlled environments, and real shell/network runner enforcement remain follow-up work.
+- Verify command execution is policy-gated with output caps, timeouts, controlled environment, and repair attempts. Shell/network execution remains denied unless an exact policy allowance exists.
 
 Open decision:
 - Define exact precedence between duplicate `develop.commit_on_*` and `git.commit_on_*` fields during config implementation.
@@ -631,6 +639,7 @@ SSE behavior:
 - Heartbeats are SSE comments (`: heartbeat`) so the control plane does not invent non-durable event envelopes.
 - `Publisher.Publish` persists through `Store.PersistEvent` before broadcasting the stored envelope to bounded subscriber queues.
 - Streams also poll durable state after the last sent sequence so events persisted by domain services outside the publisher path are still delivered.
+- Slow-reader stress coverage exists at the HTTP layer and verifies slow subscriber removal while fast readers continue.
 
 Implemented M10 SSE/control-plane tests:
 - `go test ./internal/controlplane` covers persisted replay after `Last-Event-ID`, frame shape, no `[DONE]` sentinel, detour route delegation, and detour-created event persistence through the delegated requester.
@@ -755,7 +764,7 @@ Rules:
 - `nexdev steer` maps to `POST /steer` semantics.
 - `nexdev init --import-devussy PATH` is required by migration plan.
 
-Current M12/M16 implementation:
+Current M12/M16/TASK-02/TASK-10 implementation:
 - Root command identity and global flags are now `nexdev`-oriented and include `--project-dir`, `--config`, `--state-dir`, `--no-tui`, `--json`, `--log-level`, `--profile`, `--control-url`, and `--token`.
 - `nexdev serve` opens project-local state, acquires `.nexdev/run/project.lock`, builds the M10/M11 control-plane server, and releases the lock during shutdown.
 - `nexdev auth token create|list|revoke` manages project-local opaque bearer tokens. Token hashes are stored in SQLite; plaintext token values are returned only from `create`.
@@ -763,12 +772,14 @@ Current M12/M16 implementation:
 - `nexdev pause`, `resume --control-url`, `cancel`, `steer`, `detour`, `blockers resolve`, and `provider test` are client adapters over HTTP control-plane routes. Without `--control-url`, mutating control commands fail with a structured CLI error instead of touching state directly.
 - `nexdev run --fake-provider --no-tui --json [request]` runs the deterministic local fake-provider pipeline through `internal/app`. Local `run` without `--fake-provider` returns an explicit deferred error until real-provider run wiring is assigned.
 - `nexdev run` output in JSON mode includes `project_id`, `run_id`, `status`, artifact paths, and `event_count`. The fake run writes required stage artifacts under `.nexdev/artifacts/`, persists events, and completes at canonical stage `complete`.
-- `verify`, `history`, and `artifacts open` are present in the command tree. `history` reads persisted events; standalone `verify` and artifact content opening remain deferred command work. Provider-test service execution is available only when a `ProviderTester` is injected, which M17 app wiring does under the explicit real-provider smoke env gate. Detour generation is wired through M9 `WorkflowManager` and the provider router/structured wrapper; it will fail through that service path if provider credentials/configuration are unavailable.
+- `events --follow` follows local or remote event streams, reconnects with `Last-Event-ID`, exits on cancellation/SIGINT, and supports JSON lines.
+- Root help exposes only spec command rows and no reachable root `.geoffrussy` state path. Legacy imported packages may still contain unreachable compatibility code, but root command output and no-subcommand execution do not probe legacy state.
+- `verify`, `history`, and `artifacts open` are present in the command tree. `history` reads persisted events; standalone artifact content opening remains deferred command work. Provider-test service execution is available only when a `ProviderTester` is injected, which M17 app wiring does under the explicit real-provider smoke env gate. Detour generation is wired through M9 `WorkflowManager` and the provider router/structured wrapper; it will fail through that service path if provider credentials/configuration are unavailable.
 
-M18 contract stabilization notes:
-- `api/openapi.yaml` remains the machine HTTP contract. Handlers are manually bound; generated server types and full OpenAPI response drift checks remain release follow-up.
+Final contract stabilization notes:
+- `api/openapi.yaml` remains the machine HTTP contract. Checked-in generated API types and drift checks exist; handlers are still manually bound and full response validation remains future work.
 - `docs/API.md` is a human-readable summary only; it does not replace `api/openapi.yaml` or this contract document.
-- Current fake-provider E2E covers persisted events, SSE replay, artifact presence, changed files, and fixture no-leak scanning. M19 adds package-level slow-client publisher overflow coverage; full HTTP slow-reader stress remains release follow-up.
+- Current fake-provider E2E covers persisted events, SSE replay, artifact presence, changed files, and fixture no-leak scanning. HTTP slow-reader SSE stress coverage is implemented and race-gate clean.
 - Real-provider provider-test execution remains optional and is wired only through the injected M17 smoke tester under explicit env gates; it is not normal CI behavior.
 
 ## 14.1 Terminal TUI Contract
@@ -818,6 +829,10 @@ Implemented first-wave tests:
 - `go test ./internal/controlplane` validates M11 MCP descriptors, per-tool role enforcement, input validation, state read surfaces, detour/blocker/control delegation, and redacted structured MCP errors.
 - `go test ./internal/app ./internal/cli` validates M12 lifecycle project/lock setup, remote-bind safety via config/app startup, hash-only token storage, command registration, token-create output, and CLI mutation error handling when no control-plane URL is supplied.
 - `go test ./internal/app ./internal/cli ./internal/pipeline` validates M16 fake-provider app run completion, fake `run` CLI wiring, verify/handoff artifacts, changed-file manifest generation, verify events, and artifact redaction coverage.
+- `NEXDEV_CHECK_CODEGEN=1 go test ./internal/contract` validates generated OpenAPI drift.
+- `go test ./internal/pipeline ./internal/safety ./internal/cli` validates the final policy-gated verify runner, command policy checks, output caps, timeout/repair reporting, verify events, and CLI verify wiring.
+- `go test ./internal/git` validates git diff parsing, anchored changed-file detection support, path sanitization, and fallback behavior. Internal rename parsing includes `old_path`, but shared `contract.ChangedFile` artifact JSON does not expose it in v0.1.
+- `go test ./internal/controlplane` includes HTTP slow-reader SSE stress coverage.
 
 ## 16. Test Fixture Contract
 
@@ -829,3 +844,4 @@ Rules:
 - Production code must not import `internal/testutil`.
 - Fixture helpers should be extended only when an owning feature test needs them.
 - Fake provider is provider-owned and fake worker is executor-owned. `scripts/e2e_fake_provider.sh` now covers the black-box fake-provider golden path, including SSE replay and no-leak artifact checks. A reusable testutil SSE client, golden-path helper, and broader hostile fixture repos remain deferred until an owning test needs them.
+- Hostile security fixtures now cover malicious `AGENTS.md`, MCP poisoning, `.env` skip/redaction, symlink escape, and capped command output at their owning package/E2E boundaries.

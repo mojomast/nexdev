@@ -6,29 +6,32 @@ It brings together Go execution foundations, a pre-development planning pipeline
 
 ## Current Status
 
-This repository has completed M0 bootstrap through M17 real-provider smoke plumbing. M18 documentation stabilization is reconciling docs and coverage only; it does not add product behavior. M16 wires `nexdev run --fake-provider --no-tui --json` through the in-process app pipeline with fake provider and fake worker dependencies. M17 adds explicit real-provider smoke checks that are skipped by default.
+This repository has completed final TASK-01 through TASK-10 stabilization. The fake-provider pipeline, control plane, SSE follow, policy-gated verify runner, generated OpenAPI types, cost summary, git-diff changed files, stale-lock handling, hostile security fixtures, SSE stress coverage, and CLI cleanup are implemented and verified.
 
-Product behavior is still incomplete. Real-provider full pipeline execution, policy-gated shell verification, web UI, and release behavior must not be assumed until their later milestones land.
+Explicit deferrals remain: full real-provider pipeline execution, web UI assets, artifact content opening, full OpenAPI response validation, and exposing git rename `old_path` in shared changed-file artifact JSON.
 
 Current local verification commands:
 - `go test ./...`
 - `go vet ./...`
 - `go mod verify`
 - `./scripts/e2e_fake_provider.sh`
-- `./scripts/release_check.sh` when `govulncheck` is installed on `PATH`
+- `PATH="$HOME/go/bin:$PATH" govulncheck ./...`
+- `PATH="$HOME/go/bin:$PATH" ./scripts/release_check.sh`
 
-Release-gate commands that may need environment setup:
+Release-gate commands:
 - `go test -race ./...`
-- `govulncheck ./...`, after installing `govulncheck` and making its install directory, commonly `$HOME/go/bin`, available on `PATH`; release checks use the module Go version and workflow pin `1.26.4`
+- `govulncheck ./...`, after installing `govulncheck` and making its install directory, commonly `$HOME/go/bin`, available on `PATH`; release checks use Go `1.26.4`
 
 Local control-plane smoke:
 - `nexdev auth token create --role operator --ttl 30d`
 - `nexdev serve`
 - `nexdev status --json`
 - `nexdev events`
+- `nexdev events --follow`
 - `nexdev artifacts list`
 - `nexdev provider list`
 - `nexdev tui`
+- `nexdev verify`
 
 Fake-provider E2E smoke:
 - `nexdev run --fake-provider --no-tui --json "implement fake smoke"`
@@ -50,10 +53,13 @@ Safe defaults:
 - Fake E2E uses the safe fake worker and does not execute shell or network commands.
 - Real-provider smoke tests are disabled by default and require explicit env gates, provider credentials, a tiny spend cap, and a strict timeout before any provider call is made.
 
-Known deferred command behavior:
+Generated contract code:
+- `make generate` regenerates `api/generated/nexdev_api.gen.go` from `api/openapi.yaml`.
+- `NEXDEV_CHECK_CODEGEN=1 go test ./internal/contract` checks codegen drift.
+
+Known deferred behavior:
 - Local `nexdev run` without `--fake-provider` returns an explicit deferred error until full real-provider run wiring is assigned.
-- `nexdev events --follow` is registered but deferred; current event reads are snapshot reads through `/events`.
-- Standalone `nexdev verify`, `nexdev artifacts open`, generated OpenAPI server code, and policy-gated shell verification/repair are deferred.
+- `nexdev artifacts open`, generated OpenAPI server binding/response validation, and full real-provider pipeline execution are deferred.
 - Web UI assets are not implemented; `nexdev tui` is terminal-only.
 
 ## Source Of Truth
@@ -73,7 +79,7 @@ If implementation disagrees with `SPEC.md`, the implementation is wrong unless t
 
 ## Planned Architecture
 
-Nexdev is planned as a local-first Go 1.24+ single binary with:
+Nexdev is a local-first Go 1.26.4 single binary with:
 - Staged lifecycle from ideation through handoff.
 - SQLite-backed durable state.
 - Persisted SSE event replay.
@@ -87,10 +93,10 @@ Nexdev is planned as a local-first Go 1.24+ single binary with:
 
 ## Development Plan
 
-Implementation is intentionally subagent-oriented and milestone-driven. M0-M17 are implemented or verified at their assigned scope; remaining release work is tracked in `DEVPLAN.md` M19 and the spec coverage matrix.
+Implementation is intentionally subagent-oriented and milestone-driven. M0-M19 plus TASK-01 through TASK-10 are implemented or verified at their assigned scope; remaining explicit deferrals are tracked in `DEVPLAN.md` and the spec coverage matrix.
 
 Next actions:
-- Finish release readiness: full gate execution, release/CI scripts, OpenAPI/codegen drift checks, slow-client stress, broader hostile security fixtures, and final maintainer handoff.
+- Keep full release gates green after changes: tests, race, vet, mod verify, govulncheck, generated-code drift, and fake-provider E2E.
 - Use `docs/OPERATING.md` and `docs/RELEASE_READINESS.md` for release commands and handoff state.
 - Keep real-provider smoke out of normal CI unless explicitly configured as a release job with env gates and spend cap.
 
