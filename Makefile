@@ -1,4 +1,4 @@
-.PHONY: build test clean install install-system uninstall lint fmt vet run help
+.PHONY: build test clean install install-system uninstall lint fmt vet run help generate
 
 # Build variables
 BINARY_NAME=geoffrussy
@@ -26,6 +26,12 @@ build:
 test:
 	@echo "Running tests..."
 	$(GO) test -v -race -coverprofile=coverage.txt ./...
+
+## generate: Regenerate checked-in contract code
+generate:
+	@echo "Generating OpenAPI contract code..."
+	@mkdir -p api/generated
+	$(GO) tool oapi-codegen -generate types -package generated -o api/generated/nexdev_api.gen.go api/openapi.yaml
 
 ## test-unit: Run unit tests only
 test-unit:

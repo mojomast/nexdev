@@ -1,9 +1,11 @@
 package git
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,79 @@ func TestAcquireProjectLock(t *testing.T) {
 	}
 }
 
+func TestAcquireProjectLockLivePIDReturnsHeld(t *testing.T) {
+	root := t.TempDir()
+	lockPath := writeProjectLockForTest(t, root, os.Getpid())
+
+	lock, err := AcquireProjectLock(root)
+	if lock != nil {
+		_ = lock.Release()
+	}
+	if !errors.Is(err, ErrProjectLockHeld) {
+		t.Fatalf("AcquireProjectLock error = %v, want ErrProjectLockHeld", err)
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("live lock should remain: %v", err)
+	}
+}
+
+func TestAcquireProjectLockDeadPIDIsCleanedUp(t *testing.T) {
+	root := t.TempDir()
+	lockPath := writeProjectLockForTest(t, root, 12345)
+	restore := stubProjectLockPIDLive(func(pid int) (bool, error) {
+		if pid != 12345 {
+			t.Fatalf("pid liveness check got %d, want 12345", pid)
+		}
+		return false, nil
+	})
+	defer restore()
+
+	lock, err := AcquireProjectLock(root)
+	if err != nil {
+		t.Fatalf("AcquireProjectLock returned error: %v", err)
+	}
+	defer lock.Release()
+	if lock.Path() != lockPath {
+		t.Fatalf("lock path = %q, want %q", lock.Path(), lockPath)
+	}
+	metadata, err := ReadProjectLockMetadata(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.PID != os.Getpid() {
+		t.Fatalf("metadata PID = %d, want current pid %d", metadata.PID, os.Getpid())
+	}
+}
+
+func TestAcquireProjectLockMalformedPIDReturnsStale(t *testing.T) {
+	root := t.TempDir()
+	lockPath, err := ProjectLockPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, []byte("pid=not-a-pid\nacquired_at=2026-06-30T10:00:00Z\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	lock, err := AcquireProjectLock(root)
+	if lock != nil {
+		_ = lock.Release()
+	}
+	if !errors.Is(err, ErrProjectLockStale) {
+		t.Fatalf("AcquireProjectLock error = %v, want ErrProjectLockStale", err)
+	}
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("malformed lock should remain: %v", err)
+	}
+	if !strings.Contains(string(data), "pid=not-a-pid") {
+		t.Fatalf("malformed lock was changed: %q", string(data))
+	}
+}
+
 func TestProjectLockReleaseAllowsReacquire(t *testing.T) {
 	root := t.TempDir()
 
@@ -86,8 +161,23 @@ func TestProjectLockRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
-func TestProjectLockStalePolicyFailsSafeWithoutRemoval(t *testing.T) {
+func TestAcquireProjectLockWithTimeoutExitsAfterContextCancellation(t *testing.T) {
 	root := t.TempDir()
+	writeProjectLockForTest(t, root, os.Getpid())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	lock, err := AcquireProjectLockWithTimeout(ctx, root, time.Millisecond)
+	if lock != nil {
+		_ = lock.Release()
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("AcquireProjectLockWithTimeout error = %v, want context.Canceled", err)
+	}
+}
+
+func writeProjectLockForTest(t *testing.T, root string, pid int) string {
+	t.Helper()
 	lockPath, err := ProjectLockPath(root)
 	if err != nil {
 		t.Fatal(err)
@@ -95,23 +185,15 @@ func TestProjectLockStalePolicyFailsSafeWithoutRemoval(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0700); err != nil {
 		t.Fatal(err)
 	}
-	staleAt := time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC)
-	if err := os.WriteFile(lockPath, []byte("pid=999999\nacquired_at="+staleAt.Format(time.RFC3339Nano)+"\n"), 0600); err != nil {
+	acquiredAt := time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(lockPath, []byte("pid="+strconv.Itoa(pid)+"\nacquired_at="+acquiredAt.Format(time.RFC3339Nano)+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	return lockPath
+}
 
-	_, err = AcquireProjectLockWithPolicy(root, StaleLockPolicy{MaxAge: time.Hour, Now: func() time.Time { return staleAt.Add(2 * time.Hour) }})
-	if !errors.Is(err, ErrProjectLockStale) {
-		t.Fatalf("AcquireProjectLockWithPolicy error = %v, want ErrProjectLockStale", err)
-	}
-	if _, err := os.Stat(lockPath); err != nil {
-		t.Fatalf("stale lock should remain for manual recovery: %v", err)
-	}
-	metadata, err := ReadProjectLockMetadata(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if metadata.PID != 999999 || !metadata.AcquiredAt.Equal(staleAt) {
-		t.Fatalf("metadata = %+v", metadata)
-	}
+func stubProjectLockPIDLive(fn func(int) (bool, error)) func() {
+	original := projectLockPIDLive
+	projectLockPIDLive = fn
+	return func() { projectLockPIDLive = original }
 }

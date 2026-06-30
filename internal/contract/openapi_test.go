@@ -1,7 +1,9 @@
 package contract
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -98,6 +100,36 @@ func TestOpenAPICommonSchemasExist(t *testing.T) {
 		if _, ok := schemas[name]; !ok {
 			t.Fatalf("missing schema %s", name)
 		}
+	}
+}
+
+func TestOpenAPICodegenDrift(t *testing.T) {
+	if os.Getenv("NEXDEV_CHECK_CODEGEN") != "1" {
+		t.Skip("set NEXDEV_CHECK_CODEGEN=1 to check generated OpenAPI drift")
+	}
+
+	repoRoot := filepath.Join("..", "..")
+	generatedPath := filepath.Join(repoRoot, "api", "generated", "nexdev_api.gen.go")
+	want, err := os.ReadFile(generatedPath)
+	if err != nil {
+		t.Fatalf("read generated OpenAPI file: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	gotPath := filepath.Join(tmpDir, "nexdev_api.gen.go")
+	cmd := exec.Command("go", "tool", "oapi-codegen", "-generate", "types", "-package", "generated", "-o", gotPath, filepath.Join("api", "openapi.yaml"))
+	cmd.Dir = repoRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run oapi-codegen: %v\n%s", err, output)
+	}
+
+	got, err := os.ReadFile(gotPath)
+	if err != nil {
+		t.Fatalf("read regenerated OpenAPI file: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("generated OpenAPI code is stale; run `make generate` and commit %s", generatedPath)
 	}
 }
 

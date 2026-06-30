@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mojomast/nexdev/internal/app"
@@ -170,11 +172,11 @@ var eventsCmd = &cobra.Command{
 	Use:   "events",
 	Short: "List or follow persisted events",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if eventsFollow {
+			return followEvents(cmd)
+		}
 		if controlURL == "" {
 			return localRead(cmd, "/events")
-		}
-		if eventsFollow {
-			return fmt.Errorf("events --follow requires a run SSE URL and is deferred until E2E wiring")
 		}
 		return remoteRequest(cmd.Context(), http.MethodGet, "/events", nil, cmd.OutOrStdout())
 	},
@@ -331,6 +333,31 @@ func remoteRequest(ctx context.Context, method, path string, body any, out io.Wr
 	}
 	_, err = out.Write(data)
 	return err
+}
+
+func followEvents(cmd *cobra.Command) error {
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if controlURL != "" {
+		return controlplane.FollowSSE(ctx, controlURL, cmd.OutOrStdout(), controlplane.FollowOptions{JSON: jsonOutput, Token: effectiveToken()})
+	}
+	rt, err := app.OpenRuntime(ctx, appOptions(), false)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	runs, err := rt.Store.ListRunsByProject(ctx, rt.ProjectID)
+	if err != nil {
+		return err
+	}
+	if len(runs) == 0 {
+		return fmt.Errorf("no runs for project %s", rt.ProjectID)
+	}
+	server, err := rt.NewControlPlaneServer()
+	if err != nil {
+		return err
+	}
+	return controlplane.FollowPublisher(ctx, rt.Store, server.Publisher(), cmd.OutOrStdout(), controlplane.FollowOptions{RunID: runs[len(runs)-1].ID, JSON: jsonOutput})
 }
 
 func effectiveToken() string {

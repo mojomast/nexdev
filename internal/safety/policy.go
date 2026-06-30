@@ -60,6 +60,13 @@ type ShellToolPolicy struct {
 	OutputCapBytes int
 }
 
+type CommandExecutionDecision struct {
+	Allowed        bool
+	Reason         string
+	TimeoutSeconds int
+	OutputCapBytes int
+}
+
 func DefaultToolPolicy() ToolPolicy {
 	return ToolPolicy{
 		ReadFile:  BasicToolPolicy{Default: DecisionAllow},
@@ -97,15 +104,23 @@ func (p ToolPolicy) AllowsNetwork() bool {
 }
 
 func (p ToolPolicy) AllowsShellCommand(command string) bool {
+	return p.AuthorizeShellCommand(command).Allowed
+}
+
+func (p ToolPolicy) AuthorizeShellCommand(command string) CommandExecutionDecision {
+	command = strings.TrimSpace(command)
 	if strings.TrimSpace(command) == "" || p.Shell.Default != DecisionAllow && len(p.Shell.AllowCommands) == 0 {
-		return false
+		return CommandExecutionDecision{Allowed: false, Reason: "shell command execution denied by policy", TimeoutSeconds: p.Shell.TimeoutSeconds, OutputCapBytes: p.Shell.OutputCapBytes}
 	}
 	for _, allowed := range p.Shell.AllowCommands {
 		if command == allowed {
-			return true
+			return CommandExecutionDecision{Allowed: true, Reason: "shell command explicitly allowed by policy", TimeoutSeconds: p.Shell.TimeoutSeconds, OutputCapBytes: p.Shell.OutputCapBytes}
 		}
 	}
-	return p.Shell.Default == DecisionAllow
+	if p.Shell.Default == DecisionAllow {
+		return CommandExecutionDecision{Allowed: true, Reason: "shell command allowed by default policy", TimeoutSeconds: p.Shell.TimeoutSeconds, OutputCapBytes: p.Shell.OutputCapBytes}
+	}
+	return CommandExecutionDecision{Allowed: false, Reason: "shell command not present in allow_commands", TimeoutSeconds: p.Shell.TimeoutSeconds, OutputCapBytes: p.Shell.OutputCapBytes}
 }
 
 func (p ToolPolicy) ValidateWritePath(path string) error {

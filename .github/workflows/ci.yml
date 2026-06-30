@@ -29,6 +29,13 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
+      - name: Check generated OpenAPI contract
+        env:
+          NEXDEV_CHECK_CODEGEN: '1'
+        run: |
+          make generate
+          go test ./internal/contract
+
       - name: Run release gates
         run: ./scripts/release_check.sh
 

@@ -503,17 +503,17 @@ components:
         project_id:
           type: string
         active_run:
-          anyOf:
+          allOf:
             - $ref: "#/components/schemas/RunSnapshot"
-            - type: "null"
+          nullable: true
         stages:
           type: array
           items:
             $ref: "#/components/schemas/StageSnapshot"
         current_task:
-          anyOf:
+          allOf:
             - $ref: "#/components/schemas/TaskSpec"
-            - type: "null"
+          nullable: true
         blockers:
           type: array
           items:

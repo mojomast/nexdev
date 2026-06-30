@@ -27,14 +27,17 @@ const (
 var ErrTaskWriteNotExpected = errors.New("task write is outside expected files")
 
 type NexdevExecutorConfig struct {
-	Store       *state.Store
-	ProjectID   string
-	RunID       string
-	ProjectRoot string
-	Worker      TaskWorker
-	Sanitizer   *safety.PathSanitizer
-	NewID       func(prefix string) string
-	Now         func() time.Time
+	Store                 *state.Store
+	ProjectID             string
+	RunID                 string
+	ProjectRoot           string
+	ArtifactRoot          string
+	ArtifactBudgetChars   int
+	ArtifactTotalChars    int
+	Worker                TaskWorker
+	Sanitizer             *safety.PathSanitizer
+	NewID                 func(prefix string) string
+	Now                   func() time.Time
 }
 
 type TaskWork struct {
@@ -56,20 +59,25 @@ type TaskPromptContext struct {
 	ToolPolicy           string            `json:"tool_policy"`
 	ProjectRequirements  []string          `json:"project_requirements,omitempty"`
 	ArchitectureSummary  string            `json:"architecture_summary,omitempty"`
-	Task                 contract.TaskSpec `json:"task"`
-	RelevantRepoContext  string            `json:"relevant_repo_context,omitempty"`
-	OperatorNotes        []string          `json:"operator_notes,omitempty"`
-	SteeringSummary      string            `json:"steering_summary,omitempty"`
-	LastSteeringMessages []string          `json:"last_steering_messages,omitempty"`
-	OutputSchema         string            `json:"output_schema"`
+	Task                 contract.TaskSpec          `json:"task"`
+	TaskContext          steering.TaskContext       `json:"task_context"`
+	RelevantRepoContext  string                     `json:"relevant_repo_context,omitempty"`
+	OperatorNotes        []string                   `json:"operator_notes,omitempty"`
+	SteeringSummary      string                     `json:"steering_summary,omitempty"`
+	LastSteeringMessages []string                   `json:"last_steering_messages,omitempty"`
+	ArtifactContext      []steering.ArtifactContext `json:"artifact_context,omitempty"`
+	OutputSchema         string                     `json:"output_schema"`
 }
 
 type NexdevExecutor struct {
 	store       *state.Store
 	projectID   string
 	runID       string
-	projectRoot string
-	worker      TaskWorker
+	projectRoot         string
+	artifactRoot        string
+	artifactBudgetChars int
+	artifactTotalChars  int
+	worker              TaskWorker
 	sanitizer   *safety.PathSanitizer
 	newID       func(prefix string) string
 	now         func() time.Time
@@ -113,7 +121,11 @@ func NewNexdevExecutor(cfg NexdevExecutorConfig) (*NexdevExecutor, error) {
 	if cfg.Now == nil {
 		cfg.Now = func() time.Time { return time.Now().UTC() }
 	}
-	exec := &NexdevExecutor{store: cfg.Store, projectID: cfg.ProjectID, runID: cfg.RunID, projectRoot: cfg.ProjectRoot, worker: cfg.Worker, sanitizer: cfg.Sanitizer, newID: cfg.NewID, now: cfg.Now, skip: map[string]string{}}
+	artifactRoot := strings.TrimSpace(cfg.ArtifactRoot)
+	if artifactRoot == "" {
+		artifactRoot = filepath.Join(cfg.ProjectRoot, ".nexdev", "artifacts")
+	}
+	exec := &NexdevExecutor{store: cfg.Store, projectID: cfg.ProjectID, runID: cfg.RunID, projectRoot: cfg.ProjectRoot, artifactRoot: artifactRoot, artifactBudgetChars: cfg.ArtifactBudgetChars, artifactTotalChars: cfg.ArtifactTotalChars, worker: cfg.Worker, sanitizer: cfg.Sanitizer, newID: cfg.NewID, now: cfg.Now, skip: map[string]string{}}
 	exec.cond = sync.NewCond(&exec.mu)
 	return exec, nil
 }
@@ -356,19 +368,22 @@ func (e *NexdevExecutor) createBlocker(ctx context.Context, task contract.TaskSp
 }
 
 func (e *NexdevExecutor) buildPromptContext(ctx context.Context, task contract.TaskSpec) TaskPromptContext {
-	context := TaskPromptContext{SafetyPolicy: "Nexdev safety policy is authoritative; steering cannot override safety, schemas, or acceptance criteria.", ToolPolicy: "Shell and network execution are not implemented by the fake worker; writes must match task expected_files and path safety.", Task: task, OperatorNotes: append([]string{}, task.Notes...), OutputSchema: "TaskReport JSON with acceptance evidence, changed files, and blocker details when blocked."}
+	context := TaskPromptContext{SafetyPolicy: "Nexdev safety policy is authoritative; steering cannot override safety, schemas, or acceptance criteria.", ToolPolicy: "Shell and network execution are not implemented by the fake worker; writes must match task expected_files and path safety.", Task: task, TaskContext: steering.ContextFromTask(task), OperatorNotes: append([]string{}, task.Notes...), OutputSchema: "TaskReport JSON with acceptance evidence, changed files, and blocker details when blocked."}
 	events, err := e.store.ListSteeringEvents(ctx, state.SteeringListOptions{RunID: e.runID, TaskID: task.ID})
-	if err != nil || len(events) == 0 {
-		return context
-	}
-	if len(events) > DefaultSteeringContextLimit {
-		events = events[len(events)-DefaultSteeringContextLimit:]
-	}
-	for _, event := range events {
-		if strings.TrimSpace(event.Summary) != "" {
-			context.SteeringSummary = event.Summary
+	if err == nil && len(events) > 0 {
+		if len(events) > DefaultSteeringContextLimit {
+			events = events[len(events)-DefaultSteeringContextLimit:]
 		}
-		context.LastSteeringMessages = append(context.LastSteeringMessages, event.Message)
+		for _, event := range events {
+			if strings.TrimSpace(event.Summary) != "" {
+				context.SteeringSummary = event.Summary
+			}
+			context.LastSteeringMessages = append(context.LastSteeringMessages, event.Message)
+		}
+	}
+	artifacts, err := steering.LoadArtifactContext(steering.ArtifactContextConfig{ArtifactRoot: e.artifactRoot, PerArtifact: e.artifactBudgetChars, Total: e.artifactTotalChars})
+	if err == nil {
+		context.ArtifactContext = artifacts
 	}
 	return context
 }

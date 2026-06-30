@@ -23,7 +23,9 @@ Authenticated control-plane routes use a deterministic in-process throttle for a
 
 ## Project Locks
 
-The project lock remains `.nexdev/run/project.lock`. M15 adds stale metadata detection with a safe failure policy: old locks can be reported as stale, but Nexdev does not probe processes or delete lock files automatically. Recovery is manual: verify no Nexdev process owns the project, then remove `.nexdev/run/project.lock`.
+The project lock remains `.nexdev/run/project.lock`. When acquisition finds an existing lock, Nexdev reads the recorded pid and checks process liveness with safe platform behavior. A live pid keeps the lock held. A dead pid is treated as stale and the lock file is removed before acquisition is retried. If the pid is missing, unreadable, or malformed, Nexdev returns a stale-lock error and does not remove the file automatically.
+
+Manual recovery is only for malformed or unreadable lock metadata: verify no Nexdev process owns the project, inspect `.nexdev/run/project.lock`, then remove that file. Do not remove a lock whose pid is still live unless you have independently confirmed that process is unrelated or safe to terminate.
 
 ## Token Storage
 
