@@ -158,6 +158,9 @@ func (r *Runtime) NewControlPlaneServer() (*controlplane.Server, error) {
 	if manager, err := r.detourManager(); err == nil {
 		opts = append(opts, controlplane.WithDetourManager(manager))
 	}
+	if os.Getenv(provider.RealProviderGateEnv) == "1" {
+		opts = append(opts, controlplane.WithProviderTester(realProviderTester{}))
+	}
 	return controlplane.NewServer(cfg, r.Store, opts...)
 }
 
@@ -355,4 +358,28 @@ func newID(prefix string) string {
 		return fmt.Sprintf("%s_%d", prefix, time.Now().UTC().UnixNano())
 	}
 	return prefix + "_" + base64.RawURLEncoding.EncodeToString(raw)
+}
+
+type realProviderTester struct{}
+
+func (realProviderTester) TestProvider(ctx context.Context, name string) (map[string]any, error) {
+	cfg, err := provider.RealProviderSmokeConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if name != cfg.Provider {
+		return nil, fmt.Errorf("provider test requested %q but %s=%q", name, provider.RealProviderNameEnv, cfg.Provider)
+	}
+	result, err := provider.RunRealProviderSmoke(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"provider":      result.Provider,
+		"model":         result.Model,
+		"structured_ok": result.StructuredOK,
+		"attempts":      result.Attempts,
+		"usage":         result.Usage,
+		"estimated_usd": result.EstimatedUSD,
+	}, nil
 }

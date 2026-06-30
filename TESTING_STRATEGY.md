@@ -1,6 +1,6 @@
 # Nexdev Testing Strategy
 
-**Status:** M0 bootstrap complete; M1 C1-C9 contract and fixture tests are verified.  
+**Status:** M0-M17 assigned scopes are documented; M18 reconciles current gates, skips, and release-readiness gaps.
 **Canonical requirements:** `SPEC.md` section 24 plus security and acceptance criteria sections.  
 **Execution model:** Tests are created alongside implementation by domain workers.
 
@@ -31,11 +31,18 @@ Current valid commands include:
 - `go vet ./...`
 - `go mod verify`
 - `./scripts/e2e_fake_provider.sh`
+- `./scripts/release_check.sh` when `govulncheck` is installed on `PATH`
+- `./scripts/real_provider_smoke.sh` skips by default unless explicit real-provider env gates are set.
 
-Current orchestrator-verified M1 commands:
+Current documented verification commands through M17:
 - `go test ./...`
 - `go vet ./...`
 - `go mod verify`
+- `./scripts/e2e_fake_provider.sh`
+
+Release/full-gate commands still require M19 verification in the target environment:
+- `go test -race ./...`
+- `govulncheck ./...`
 
 ## 2. Required Final Gates
 
@@ -58,6 +65,8 @@ Additional recommended commands:
 - `make ci`
 
 Recommended commands must not be documented as valid until their files exist.
+
+`govulncheck` is a required release gate, but it is an external tool availability requirement rather than product behavior. Install it before running the gate, for example with `go install golang.org/x/vuln/cmd/govulncheck@latest`, and ensure the install directory is on `PATH`. If unavailable in a worker environment, record the exact skip reason as a release-gate environment issue.
 
 ## 3. Test Layers
 
@@ -215,7 +224,7 @@ Current M12 CLI/app coverage:
 - `go test ./internal/app` covers project-local runtime opening, `.nexdev/run/project.lock` acquire/release for server lifecycle, project row creation, non-loopback/no-auth startup rejection through config/app validation, and hash-only token persistence.
 - `go test ./internal/cli` covers M12 command registration, root command identity, token create JSON output, and control mutation commands refusing to bypass the HTTP control-plane service when `--control-url` is absent.
 - Current M16 CLI/app coverage: `go test ./internal/app ./internal/cli` covers full local `run --fake-provider --no-tui --json` completion, JSON output shape, artifacts/events presence, and fake-provider opt-in wiring.
-- Remaining CLI coverage: `serve` live listener smoke, remote `events --follow` SSE client, provider-test service execution, and standalone verify/handoff commands.
+- Remaining CLI coverage: `serve` live listener smoke, remote `events --follow` SSE client, credentialed real-provider provider-test execution in an explicitly gated environment, and standalone verify/handoff commands.
 
 ### 3.8 Fake Provider and Fake Worker Tests
 
@@ -277,7 +286,7 @@ Required coverage:
 Current M2 project lock coverage:
 - `go test ./internal/git` covers `.nexdev/run/project.lock` resolution, exclusive acquisition, pid/timestamp metadata, second-acquire failure while held, release/reacquire behavior, and symlink escape rejection where the platform permits symlinks.
 
-Run `go test -race ./...` as a full gate. If a package is excluded, record the reason in `DEVPLAN.md` and spec-management handoff.
+Run `go test -race ./...` as a full gate. M17 included an executor race fix in the uncommitted worktree; M18 does not change that behavior. If a package is excluded, record the reason in `DEVPLAN.md` and spec-management handoff.
 
 ### 3.11 Optional Real-Provider Smoke Tests
 
@@ -289,11 +298,24 @@ Real-provider tests must be:
 - Free of repo secrets.
 - Skipped in normal CI.
 
-Recommended env gates:
-- `NEXDEV_REAL_PROVIDER=anthropic|openai|local`
-- `NEXDEV_REAL_PROVIDER_SMOKE=1`
-- Provider-specific API key env var.
-- `NEXDEV_REAL_PROVIDER_MAX_USD=0.25`
+Implemented M17 command:
+- `./scripts/real_provider_smoke.sh`
+
+Implemented M17 package test:
+- `go test ./internal/provider -run '^TestRealProviderSmoke$' -count=1 -v`
+
+Required env gates:
+- `NEXDEV_RUN_REAL_PROVIDER_TESTS=1`
+- `NEXDEV_REAL_PROVIDER=anthropic|openai|...`
+- `NEXDEV_REAL_PROVIDER_MODEL=<tiny/cheap model>`
+- Provider credential env, either the provider default such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, or `NEXDEV_REAL_PROVIDER_API_KEY_ENV=<ENV_NAME>`.
+- `NEXDEV_REAL_PROVIDER_MAX_USD`, required and capped at `0.25`.
+- Optional `NEXDEV_REAL_PROVIDER_TIMEOUT_S`, 1 to 30 seconds, default 15.
+
+Current M17 coverage:
+- `go test ./internal/provider` verifies default skip behavior, required credential/spend-cap gates, timeout/cap validation, and redaction of credential-like provider errors without making network calls.
+- `TestRealProviderSmoke` is the only test that can call a real provider, and it skips unless every env gate is present.
+- The smoke uses the existing provider router/structured wrapper with a tiny JSON prompt and `MaxRepairAttempts: 0`; it does not run the full pipeline and does not read repository files.
 
 ## 4. Shared Test Fixtures
 
@@ -366,7 +388,8 @@ Current fixture test command:
 - Provider errors are redacted.
 - Current M4 provider coverage: `go test ./internal/provider` covers valid decode, unknown-field rejection, repair success, repair cap failure, semantic validation failure without destination mutation, slot/model resolution through `Router.Resolve`, usage metadata capture from `provider.Response`, redacted provider errors, deterministic fake-provider calls by model/prompt, structured repair through `StructuredClient`, unrecoverable invalid fake responses, retryable and hard scripted errors, usage metadata, streaming chunks, model listing/discovery, optional authentication behavior, deterministic latency records without sleeps, and fake-provider disabled-by-default registry behavior.
 - Current M16 provider integration coverage: `go test ./internal/app ./internal/cli` and `./scripts/e2e_fake_provider.sh` cover explicit fake-provider app wiring, CLI run wiring, SSE replay, artifact checks, changed files, and no known fixture secret leakage.
-- Remaining provider coverage: real-provider opt-in smoke and provider-test service execution.
+- Remaining provider coverage: credentialed real-provider smoke execution in an explicitly gated environment and broader provider-specific cheapest-model recommendations.
+- Current M17 provider coverage: `go test ./internal/provider` covers opt-in real-provider smoke gate parsing, default skip behavior, spend-cap/timeout validation, and redacted provider errors. The actual real-provider network call remains disabled unless `NEXDEV_RUN_REAL_PROVIDER_TESTS=1` and all required provider env vars are set.
 
 ### Pipeline
 
@@ -426,9 +449,10 @@ Current fixture test command:
 - JSON errors use `ErrorResponse`.
 - Remote bind without auth fails.
 - Current M10 coverage: `go test ./internal/controlplane` covers loopback/no-auth health and status, startup rejection for non-loopback/no-auth, bearer-token observer/operator role behavior, forbidden observer mutation, SSE persisted replay with `Last-Event-ID`, SSE frame shape/no `[DONE]`, and detour route delegation with persisted `detour_created` event evidence.
+- Current M19 release-readiness coverage adds a control-plane publisher slow-client test that verifies bounded subscriber queues close an unread subscriber on overflow without unbounded memory growth.
 - Current M15 control-plane coverage adds deterministic auth rate limiting with `429` responses and `auth_throttle` audit records plus redacted error response details.
-- Remaining M10/M12/M15 coverage: slow-client overflow event behavior under stress, full OpenAPI response validation, task/config/provider mutation route service wiring, and provider-test service execution.
-- Current M12 app/CLI coverage adds project-local `nexdev serve` lifecycle wiring, project lock acquire/release, token create/list/revoke command paths, and CLI mutation error handling. Remaining M12/M15 coverage: live listener smoke, remote SSE follow, slow-client overflow stress, provider-test service wiring, and full OpenAPI response validation.
+- Remaining M10/M12/M15 coverage: slow-client overflow event behavior under stress, full OpenAPI response validation, task/config/provider mutation route service wiring, and credentialed provider-test execution in an explicitly gated environment.
+- Current M12 app/CLI coverage adds project-local `nexdev serve` lifecycle wiring, project lock acquire/release, token create/list/revoke command paths, and CLI mutation error handling. Current M17 control-plane coverage adds provider-test route delegation and default service-unavailable behavior when the tester is not wired. Remaining M12/M15 coverage: live listener smoke, remote SSE follow, slow-client overflow stress, and full OpenAPI response validation.
 
 ### Observability
 
@@ -493,3 +517,8 @@ Release gate:
 - Optional real-provider smoke with env gate and spend cap.
 - Docs complete.
 - Spec coverage complete.
+
+Known remaining release-gate gaps after M17:
+- `govulncheck` must be installed and runnable in the release environment.
+- Real-provider smoke remains optional, credential-gated, and excluded from normal CI.
+- Broader hostile security fixture coverage, OpenAPI generated-code drift checks, and standalone verify/handoff command smoke remain release follow-up work.

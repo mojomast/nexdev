@@ -1,6 +1,6 @@
 # Nexdev Architecture Plan
 
-**Status:** M0 bootstrap recorded; update as implementation lands.  
+**Status:** M18 stabilization reflects implemented behavior through M17.
 **Canonical source:** `SPEC.md`.
 
 ## 1. Repository Status
@@ -146,6 +146,11 @@ Current M16 fake-run behavior:
 - `internal/pipeline.VerifyStage` records a verify report and verify events. Commands, if supplied, are reported as default-policy denied rather than executed. `HandoffStage` writes changed-files, run-summary, and handoff artifacts. `CompleteStage` marks the canonical terminal stage.
 - The M16 E2E script creates a temp project, runs the full fake pipeline, starts the loopback control plane, validates persisted event/SSE replay, checks artifacts and changed files, and scans artifacts for known fixture secret leaks.
 
+Current M17 real-provider smoke behavior:
+- `internal/provider` owns the opt-in real-provider smoke helper and `TestRealProviderSmoke`. The helper requires `NEXDEV_RUN_REAL_PROVIDER_TESTS=1`, provider/model config, credentials through an env var, `NEXDEV_REAL_PROVIDER_MAX_USD <= 0.25`, and a bounded timeout before making any provider call.
+- The smoke validates only the router/structured-output path with a tiny fixed JSON prompt. It does not run the full pipeline, read repository files, execute tools, or register fake providers globally.
+- `scripts/real_provider_smoke.sh` is safe to run without env gates; it runs skip-path tests and exits without network. With all gates set, it runs only `TestRealProviderSmoke`.
+
 Current M9 detour behavior:
 - `internal/detour.WorkflowManager` is the Nexdev first-class detour workflow beside the legacy imported `detour.Manager`. It captures the trigger task, open blocker ID when available, neighboring tasks, phase, design-summary/artifact placeholder, repo context, source, reason, and current depth into `RequestContext` before generation.
 - Detour generation uses `provider.StructuredClient` through `provider.SlotPlanDetail` because no dedicated provider slot exists yet. A later provider/config task can add a detour slot if the orchestrator wants separate model routing.
@@ -280,7 +285,8 @@ Current M10 HTTP/SSE/auth behavior:
 - Read routes load durable state from SQLite: `/status` summarizes the selected project/run, stage runs, current executor task when wired, and open blockers; `/plan` groups persisted `nexdev_tasks`; `/artifacts` lists indexed artifacts; `/events` lists persisted events with replay limits.
 - `/runs/{run_id}/stream` replays persisted events, honors `Last-Event-ID`, emits SSE frames with persisted event IDs/types/data, and sends non-durable heartbeat comments rather than invented event envelopes. It also subscribes to the persisted-event publisher and polls durable state so events persisted by domain services such as M9 detour are visible without provider calls from routes.
 - `POST /detour` is an authenticated operator route and delegates to the M9 `WorkflowManager.Request`/compatible requester interface. The route does not generate tasks, reorder plans, or call providers directly.
-- Pause/resume/skip/steer/cancel routes are thin adapters over an injected `executor.Control` when app wiring supplies one; otherwise they return a contract-shaped service-unavailable error. Task mutation, config mutation, provider-test, and MCP call dispatch remain later worker surfaces.
+- Pause/resume/skip/steer/cancel routes are thin adapters over an injected `executor.Control` when app wiring supplies one; otherwise they return a contract-shaped service-unavailable error. Task mutation and config mutation remain later worker surfaces.
+- Provider-test routes are thin adapters over an injected `ProviderTester`. App wiring injects the M17 real-provider smoke tester only when `NEXDEV_RUN_REAL_PROVIDER_TESTS=1`; otherwise HTTP and MCP provider-test paths return structured service-unavailable/not-wired errors and do not call providers.
 - JSON errors use `ErrorResponse` and redact string detail before response.
 
 Current M11 MCP behavior:
@@ -295,7 +301,7 @@ Current M12 CLI/app lifecycle behavior:
 - `internal/app` now owns the narrow CLI/server lifecycle used by M12. It resolves project root/config/state paths, opens the project-local SQLite store at `.nexdev/state.db` by default, creates a persistent project ID file, ensures a project row exists, and acquires `.nexdev/run/project.lock` for `nexdev serve`.
 - `nexdev serve` constructs the existing M10 `controlplane.Server` with config-derived bind/auth/CORS/SSE settings, project ID, durable state store, and the M11 MCP routes registered by that server. Startup still fails before listening for non-loopback bind without auth.
 - The server secret for opaque bearer tokens is project-local under `.nexdev/run/server.secret` with `0600` permissions. `nexdev auth token create|list|revoke` uses the M10 token generation/hash helpers and M3 token repository; plaintext is printed only at creation time.
-- If a latest run exists, app wiring supplies M8 `executor.Control` to the server for pause/resume/skip/cancel/steer. App wiring also constructs the M9 `detour.WorkflowManager` with a provider router/structured client from config, so detour requests stay behind the existing detour/provider boundaries. Provider-test and full run-start services remain explicit service-unavailable/deferred paths until their app services are assigned; CLI control commands use `--control-url` rather than mutating those domains directly.
+- If a latest run exists, app wiring supplies M8 `executor.Control` to the server for pause/resume/skip/cancel/steer. App wiring also constructs the M9 `detour.WorkflowManager` with a provider router/structured client from config, so detour requests stay behind the existing detour/provider boundaries. M17 provider-test service wiring is injected only under the explicit real-provider smoke env gate; full run-start service remains service-unavailable/deferred until assigned. CLI control commands use `--control-url` rather than mutating those domains directly.
 - Local read commands such as `status --json`, `events`, `provider list`, and `artifacts list` construct the same server handler in-process. Remote mode sends HTTP requests only when `--control-url` is supplied and uses `--token` or `NEXDEV_CONTROL_TOKEN` for bearer auth.
 
 Current M13 terminal TUI behavior:
@@ -305,6 +311,10 @@ Current M13 terminal TUI behavior:
 - Pause/resume, skip, detour, steer, and cancel actions call the injected client/service path. The TUI does not call providers, execute shell commands, implement task ordering, or own pipeline state. Normal quit exits the terminal client without cancelling a run; cancel and skip require explicit confirmation.
 - Displayed event/task/blocker/artifact text is treated as untrusted and passed through secret redaction/control-character scrubbing before rendering.
 - Embedded web UI files remain unimplemented and are intentionally not created by M13 terminal TUI work.
+
+Current M18 stabilization notes:
+- Documentation now treats M0-M17 behavior as implemented at assigned scope and keeps remaining requirements visible for M19 release readiness.
+- No product behavior changed in M18. Remaining architecture work includes generated OpenAPI server types, standalone verify/handoff command services, policy-gated shell verification/repair, slow-client SSE stress hardening, broader hostile security fixtures, web UI if explicitly assigned, and full real-provider run execution if later scoped.
 
 ## 12. Development Parallelism
 

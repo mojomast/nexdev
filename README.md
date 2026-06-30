@@ -6,24 +6,39 @@ It brings together Go execution foundations, a pre-development planning pipeline
 
 ## Current Status
 
-This repository has completed M0 bootstrap, M1 first-wave contract freeze, the first CLI/app lifecycle wiring for the local control plane, the first terminal TUI control client, and a deterministic fake-provider smoke pipeline. M16 wires `nexdev run --fake-provider --no-tui --json` through the in-process app pipeline with fake provider and fake worker dependencies.
+This repository has completed M0 bootstrap through M17 real-provider smoke plumbing. M18 documentation stabilization is reconciling docs and coverage only; it does not add product behavior. M16 wires `nexdev run --fake-provider --no-tui --json` through the in-process app pipeline with fake provider and fake worker dependencies. M17 adds explicit real-provider smoke checks that are skipped by default.
 
-Product behavior is still incomplete. Real-provider execution, policy-gated shell verification, provider-test service wiring, web UI, and release behavior must not be assumed until their later milestones land.
+Product behavior is still incomplete. Real-provider full pipeline execution, policy-gated shell verification, web UI, and release behavior must not be assumed until their later milestones land.
 
-Current verified commands:
+Current local verification commands:
 - `go test ./...`
 - `go vet ./...`
 - `go mod verify`
+- `./scripts/e2e_fake_provider.sh`
+- `./scripts/release_check.sh` when `govulncheck` is installed on `PATH`
+
+Release-gate commands that may need environment setup:
+- `go test -race ./...`
+- `govulncheck ./...`, after installing `govulncheck` and making it available on `PATH`
 
 Local control-plane smoke:
 - `nexdev auth token create --role operator --ttl 30d`
 - `nexdev serve`
 - `nexdev status --json`
+- `nexdev events`
+- `nexdev artifacts list`
+- `nexdev provider list`
 - `nexdev tui`
 
 Fake-provider E2E smoke:
 - `nexdev run --fake-provider --no-tui --json "implement fake smoke"`
 - `./scripts/e2e_fake_provider.sh`
+
+Optional real-provider smoke:
+- Default command is safe and skips without network: `./scripts/real_provider_smoke.sh`
+- To opt in, set `NEXDEV_RUN_REAL_PROVIDER_TESTS=1`, `NEXDEV_REAL_PROVIDER`, `NEXDEV_REAL_PROVIDER_MODEL`, `NEXDEV_REAL_PROVIDER_MAX_USD`, and credentials via the provider key env such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+- The spend cap must be `> 0` and `<= 0.25`; timeout defaults to 15 seconds and can be set with `NEXDEV_REAL_PROVIDER_TIMEOUT_S` from 1 to 30 seconds.
+- The smoke sends only a tiny JSON prompt through the provider structured-output wrapper. Do not put secrets in prompts, model names, or docs used by the smoke.
 
 Safe defaults:
 - `nexdev serve` binds to `127.0.0.1:7432` by default.
@@ -33,6 +48,13 @@ Safe defaults:
 - Quitting the TUI exits only the terminal client; cancel/skip actions require explicit confirmation and route through control-plane services.
 - The fake-provider run path is explicit opt-in only; fake is not registered in the production provider registry.
 - Fake E2E uses the safe fake worker and does not execute shell or network commands.
+- Real-provider smoke tests are disabled by default and require explicit env gates, provider credentials, a tiny spend cap, and a strict timeout before any provider call is made.
+
+Known deferred command behavior:
+- Local `nexdev run` without `--fake-provider` returns an explicit deferred error until full real-provider run wiring is assigned.
+- `nexdev events --follow` is registered but deferred; current event reads are snapshot reads through `/events`.
+- Standalone `nexdev verify`, `nexdev artifacts open`, generated OpenAPI server code, and policy-gated shell verification/repair are deferred.
+- Web UI assets are not implemented; `nexdev tui` is terminal-only.
 
 ## Source Of Truth
 
@@ -65,14 +87,12 @@ Nexdev is planned as a local-first Go 1.24+ single binary with:
 
 ## Development Plan
 
-Implementation is intentionally subagent-oriented and milestone-driven. Completed:
-- M0: repository bootstrap and geoffrussy foundation import.
-- M1: contract freeze for OpenAPI, events, state, stage interfaces, provider boundary, auth roles, executor/detour interfaces, and test fixtures.
+Implementation is intentionally subagent-oriented and milestone-driven. M0-M17 are implemented or verified at their assigned scope; remaining release work is tracked in `DEVPLAN.md` M19 and the spec coverage matrix.
 
 Next actions:
-- Continue with M2 config, path, logging, and security baseline work.
-- Follow with M3 state repositories, M4 provider behavior, and M5 pipeline framework work.
-- Keep later executor, control-plane, MCP, CLI/TUI, E2E, docs, and release milestones aligned with `SPEC.md` and `DEVPLAN.md`.
+- Finish release readiness: full gate execution, release/CI scripts, OpenAPI/codegen drift checks, slow-client stress, broader hostile security fixtures, and final maintainer handoff.
+- Use `docs/OPERATING.md` and `docs/RELEASE_READINESS.md` for release commands and handoff state.
+- Keep real-provider smoke out of normal CI unless explicitly configured as a release job with env gates and spend cap.
 
 Use `PROMPT_FOR_DEVELOPMENT_SESSION.md` to start the separate build session.
 

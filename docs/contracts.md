@@ -1,6 +1,6 @@
 # Nexdev Contracts Plan
 
-**Status:** M1 first-wave OpenAPI, event, stage/status, state migration, artifact, model-output, provider router, executor, steering, detour, auth role, and test-fixture contracts exist.  
+**Status:** M18 stabilization reflects contract behavior implemented through M17 and keeps release-readiness gaps explicit.
 **Canonical source:** `SPEC.md`.  
 **Rule:** Once created, `api/openapi.yaml`, migrations, generated API types, and schema files are contract artifacts and must stay synchronized with this document.
 
@@ -617,8 +617,13 @@ Implemented routes:
 
 Current route deferrals:
 - `POST /runs` requires an app-level runner service and returns service-unavailable unless `RunStarter` is injected.
-- Task mutation routes, config mutation, provider test, and MCP call dispatch remain later worker surfaces and currently return `ErrorResponse` with `not_implemented` or `service_unavailable`.
+- Task mutation routes and config mutation remain later worker surfaces and currently return `ErrorResponse` with `not_implemented` or `service_unavailable`.
 - Generated OpenAPI server types remain deferred; handlers are manually bound to the existing `api/openapi.yaml` contract.
+
+Provider-test behavior:
+- `POST /providers/{name}/test` delegates only to an injected `ProviderTester`; without one it returns service-unavailable and does not call providers.
+- M17 app wiring injects a real-provider smoke tester only when `NEXDEV_RUN_REAL_PROVIDER_TESTS=1` is present. The injected tester still requires provider/model/credential env vars, `NEXDEV_REAL_PROVIDER_MAX_USD <= 0.25`, and a bounded timeout before calling providers.
+- The provider-test implementation uses the provider router and structured-output wrapper with a tiny fixed JSON prompt. Errors are returned through `ErrorResponse` after secret redaction.
 
 SSE behavior:
 - Frames use `id`, `event`, `retry`, and `data` with the persisted `contract.EventEnvelope` JSON.
@@ -667,7 +672,7 @@ Implemented M11 behavior:
 
 M11 deferrals:
 - `nexdev_get_artifact` returns durable artifact index metadata only; artifact file content serving remains a later artifact/API path-safety task because the control-plane server is not yet wired with a validated project root reader.
-- Provider-test execution requires an injected `ProviderTester`; MCP returns a structured not-implemented/service-unavailable error when that service is absent.
+- Provider-test execution requires an injected `ProviderTester`; MCP returns a structured not-implemented/service-unavailable error when that service is absent. M17 app wiring injects the real-provider smoke tester only under `NEXDEV_RUN_REAL_PROVIDER_TESTS=1`.
 - Stdio MCP mode in legacy `internal/mcp` is not the M11 surface. M11 disables legacy tool/resource registration to avoid exposing imported provider/executor handlers; later CLI/stdin MCP work must adapt to the control-plane service boundary before exposure.
 
 ## 12. Artifact Contract
@@ -758,7 +763,13 @@ Current M12/M16 implementation:
 - `nexdev pause`, `resume --control-url`, `cancel`, `steer`, `detour`, `blockers resolve`, and `provider test` are client adapters over HTTP control-plane routes. Without `--control-url`, mutating control commands fail with a structured CLI error instead of touching state directly.
 - `nexdev run --fake-provider --no-tui --json [request]` runs the deterministic local fake-provider pipeline through `internal/app`. Local `run` without `--fake-provider` returns an explicit deferred error until real-provider run wiring is assigned.
 - `nexdev run` output in JSON mode includes `project_id`, `run_id`, `status`, artifact paths, and `event_count`. The fake run writes required stage artifacts under `.nexdev/artifacts/`, persists events, and completes at canonical stage `complete`.
-- `verify`, `history`, and `artifacts open` are present in the command tree. `history` reads persisted events; standalone `verify` and artifact content opening remain deferred command work. Provider-test service execution also remains later milestone work. Detour generation is wired through M9 `WorkflowManager` and the provider router/structured wrapper; it will fail through that service path if provider credentials/configuration are unavailable.
+- `verify`, `history`, and `artifacts open` are present in the command tree. `history` reads persisted events; standalone `verify` and artifact content opening remain deferred command work. Provider-test service execution is available only when a `ProviderTester` is injected, which M17 app wiring does under the explicit real-provider smoke env gate. Detour generation is wired through M9 `WorkflowManager` and the provider router/structured wrapper; it will fail through that service path if provider credentials/configuration are unavailable.
+
+M18 contract stabilization notes:
+- `api/openapi.yaml` remains the machine HTTP contract. Handlers are manually bound; generated server types and full OpenAPI response drift checks remain release follow-up.
+- `docs/API.md` is a human-readable summary only; it does not replace `api/openapi.yaml` or this contract document.
+- Current fake-provider E2E covers persisted events, SSE replay, artifact presence, changed files, and fixture no-leak scanning. M19 adds package-level slow-client publisher overflow coverage; full HTTP slow-reader stress remains release follow-up.
+- Real-provider provider-test execution remains optional and is wired only through the injected M17 smoke tester under explicit env gates; it is not normal CI behavior.
 
 ## 14.1 Terminal TUI Contract
 

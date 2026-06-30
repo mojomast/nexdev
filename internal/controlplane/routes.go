@@ -64,7 +64,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /config", s.route(RoleObserver, http.HandlerFunc(s.handleConfig)))
 	s.mux.Handle("PUT /config", s.route(RoleAdmin, http.HandlerFunc(s.notImplemented)))
 	s.mux.Handle("GET /providers", s.route(RoleObserver, http.HandlerFunc(s.handleProviders)))
-	s.mux.Handle("POST /providers/{name}/test", s.route(RoleOperator, http.HandlerFunc(s.notImplemented)))
+	s.mux.Handle("POST /providers/{name}/test", s.route(RoleOperator, http.HandlerFunc(s.handleProviderTest)))
 	s.mux.Handle("GET /mcp/tools", s.route(RoleObserver, http.HandlerFunc(s.handleMCPTools)))
 	s.mux.Handle("POST /mcp/call", s.route(RoleObserver, http.HandlerFunc(s.handleMCPCall)))
 }
@@ -274,6 +274,20 @@ func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleProviders(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"providers": []any{}})
+}
+
+func (s *Server) handleProviderTest(w http.ResponseWriter, r *http.Request) {
+	if s.providerTests == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "service_unavailable", "provider test service is not wired", nil)
+		return
+	}
+	name := r.PathValue("name")
+	result, err := s.providerTests.TestProvider(r.Context(), name)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "provider_test_failed", "provider test failed", map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) notImplemented(w http.ResponseWriter, r *http.Request) {

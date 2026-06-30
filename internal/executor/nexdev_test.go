@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -185,10 +186,10 @@ func (w *capturingWorker) RunTask(ctx context.Context, work TaskWork) ([]TaskUpd
 
 func newExecutorForTest(t *testing.T, store *state.Store, root, projectID, runID string, worker TaskWorker) *NexdevExecutor {
 	t.Helper()
-	seq := 0
+	var seq atomic.Int64
 	exec, err := NewNexdevExecutor(NexdevExecutorConfig{Store: store, ProjectID: projectID, RunID: runID, ProjectRoot: root, Worker: worker, NewID: func(prefix string) string {
-		seq++
-		return prefix + "_test_" + strings.ReplaceAll(runID, "_", "") + "_" + string(rune('a'+seq))
+		next := seq.Add(1)
+		return prefix + "_test_" + strings.ReplaceAll(runID, "_", "") + "_" + string(rune('a'+next))
 	}})
 	if err != nil {
 		t.Fatalf("NewNexdevExecutor failed: %v", err)

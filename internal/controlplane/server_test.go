@@ -181,6 +181,32 @@ func TestSSEReplayUsesPersistedEventsAndLastEventID(t *testing.T) {
 	}
 }
 
+func TestPublisherClosesSlowClientOnQueueOverflow(t *testing.T) {
+	store := newControlPlaneTestStore(t)
+	seedProject(t, store, "proj_slow_client")
+	seedRun(t, store, "proj_slow_client", "run_slow_client")
+	publisher := NewPublisher(store, 1)
+	_, ch, unsubscribe := publisher.Subscribe()
+	defer unsubscribe()
+
+	for i := 1; i <= 2; i++ {
+		_, err := publisher.Publish(context.Background(), contract.EventEnvelope{EventID: fmt.Sprintf("evt_slow_%d", i), RunID: "run_slow_client", Type: contract.EventTypeTaskProgress, Source: contract.EventSourceCore, Payload: json.RawMessage(`{}`)})
+		if err != nil {
+			t.Fatalf("publish %d failed: %v", i, err)
+		}
+	}
+
+	if event, ok := <-ch; !ok || event.EventID != "evt_slow_1" {
+		t.Fatalf("first buffered event = %#v ok=%v", event, ok)
+	}
+	if event, ok := <-ch; ok {
+		t.Fatalf("slow client channel remained open with event %#v", event)
+	}
+	if _, err := publisher.Publish(context.Background(), contract.EventEnvelope{EventID: "evt_slow_3", RunID: "run_slow_client", Type: contract.EventTypeTaskProgress, Source: contract.EventSourceCore, Payload: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("publish after slow-client close failed: %v", err)
+	}
+}
+
 func TestDetourRouteCallsRequesterAndSurfacesPersistedResult(t *testing.T) {
 	store := newControlPlaneTestStore(t)
 	seedProject(t, store, "proj_detour")
@@ -225,6 +251,42 @@ func TestControlPlaneErrorResponseRedactsSecrets(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "sk-1234567890abcdef") || !strings.Contains(rec.Body.String(), "[REDACTED]") {
 		t.Fatalf("error response did not redact secret: %s", rec.Body.String())
+	}
+}
+
+func TestProviderTestRouteDelegatesAndRedactsErrors(t *testing.T) {
+	store := newControlPlaneTestStore(t)
+	seedProject(t, store, "proj_provider_test")
+	seedRun(t, store, "proj_provider_test", "run_provider_test")
+	server, err := NewServer(ServerConfig{Bind: "127.0.0.1", ProjectID: "proj_provider_test"}, store, WithProviderTester(providerTesterFunc(func(_ context.Context, name string) (map[string]any, error) {
+		if name != "anthropic" {
+			return nil, fmt.Errorf("unexpected provider %q", name)
+		}
+		return nil, fmt.Errorf("provider failed with api_key=sk-real-secretsecret")
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/providers/anthropic/test", nil)
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "sk-real-secretsecret") || !strings.Contains(rec.Body.String(), "[REDACTED]") {
+		t.Fatalf("provider test error was not redacted: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProviderTestRouteUnavailableByDefault(t *testing.T) {
+	store := newControlPlaneTestStore(t)
+	seedProject(t, store, "proj_provider_unavailable")
+	server, err := NewServer(ServerConfig{Bind: "127.0.0.1", ProjectID: "proj_provider_unavailable"}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/providers/anthropic/test", nil)
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("provider test without service = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
