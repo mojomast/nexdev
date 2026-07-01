@@ -79,7 +79,7 @@ Common Pi/TUI/CLI reads:
 Common mutations:
 - `POST /pause`, `POST /resume`, `POST /skip`, `POST /steer`, `POST /detour`: operator role.
 - `POST /cancel`: admin role.
-- `POST /runs`: operator role, service-dependent; Pi New Run overlay UX is currently deferred.
+- `POST /runs`: operator role, service-dependent; Pi New Run overlay UX uses `ctx.ui.editor` and calls `client.startRun()`.
 
 If a service is not injected, routes may return service-unavailable. UIs should render explicit disabled/deferred states rather than invent behavior.
 

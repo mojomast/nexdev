@@ -18,9 +18,9 @@ import type {
 } from "./types.js";
 
 type MenuResult = "opened";
-type MenuScreenID = "top" | "monitor" | "control" | "providers" | "newRun" | "config";
-type ViewID = "overview" | "events" | "plan" | "blockers" | "artifacts" | "providers" | "config" | "newRun";
-type ActionID = "pauseResume" | "skip" | "cancel" | "detour" | "steer";
+type MenuScreenID = "top" | "monitor" | "control" | "providers" | "config";
+type ViewID = "overview" | "events" | "plan" | "blockers" | "artifacts" | "providers" | "config";
+type ActionID = "pauseResume" | "skip" | "cancel" | "detour" | "steer" | "newRun";
 
 type MenuEntry =
   | { label: string; description: string; action: "submenu"; target: MenuScreenID }
@@ -308,9 +308,7 @@ class NexdevMenuComponent {
           this.setView(id, "ready", renderConfig(config));
           return;
         }
-        case "newRun":
-          this.setView(id, "deferred", ["[DEFERRED: POST /runs UX is not implemented in the Pi overlay yet]"]);
-          return;
+
       }
     } catch (error) {
       if (!abort.signal.aborted) {
@@ -452,6 +450,21 @@ class NexdevMenuComponent {
           this.notify(`Detour requested for ${taskID}.`, "info");
           return;
         }
+        case "newRun": {
+          this.close();
+          const input = await this.ctx.ui.editor("New Nexdev Run", "Describe what you want Nexdev to build or modify...");
+          if (typeof input !== "string") {
+            return;
+          }
+          const prompt = input.trim();
+          if (prompt === "") {
+            this.notify("Run prompt cannot be empty.", "warning");
+            return;
+          }
+          const snapshot = await client.startRun({ prompt });
+          this.notify(`Nexdev run started: ${snapshot.run_id} (${snapshot.status})`, "info");
+          return;
+        }
       }
     } catch (error) {
       this.notify(formatError(error), "error");
@@ -498,7 +511,7 @@ const screens: Record<MenuScreenID, MenuScreen> = {
       { label: "Monitor Run", description: "Open status, events, plan, blockers, and artifacts.", action: "submenu", target: "monitor" },
       { label: "Control Run", description: "Pause/resume, skip, cancel, detour, or deferred steer entry.", action: "submenu", target: "control" },
       { label: "Providers", description: "Read provider status; provider testing remains deferred in this overlay.", action: "submenu", target: "providers" },
-      { label: "New Run (deferred)", description: "POST /runs UX is deferred; no run is started from this overlay.", action: "view", view: "newRun" },
+      { label: "New Run", description: "Start a new Nexdev run. Opens an editor for the run prompt.", action: "control", control: "newRun" },
       { label: "Config", description: "Render redacted config from GET /config.", action: "submenu", target: "config" },
       { label: "Close Menu", description: "Close overlay and return focus to the Pi editor.", action: "close" },
     ],
@@ -536,14 +549,7 @@ const screens: Record<MenuScreenID, MenuScreen> = {
       { label: "Back", description: "Return to the top-level menu.", action: "back" },
     ],
   },
-  newRun: {
-    title: "New Run (deferred)",
-    message: "Starting runs from Pi is deferred until POST /runs UX is stable.",
-    entries: [
-      { label: "[DEFERRED: POST /runs UX]", description: "No run is started from this overlay.", action: "close" },
-      { label: "Back", description: "Return to the top-level menu.", action: "back" },
-    ],
-  },
+
   config: {
     title: "Config",
     message: "Config display is read-only and redacted. Mutation remains unavailable in this overlay.",
@@ -663,8 +669,7 @@ function viewTitle(id: ViewID): string {
       return "Providers";
     case "config":
       return "Config";
-    case "newRun":
-      return "New Run";
+
   }
 }
 

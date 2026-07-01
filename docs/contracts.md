@@ -838,6 +838,7 @@ Extension packaging/cache behavior:
 Makefile targets:
 - `make pi-ext-check` installs extension dependencies and runs the TypeScript compile check.
 - `make pi-ext-build` prepares `bin/pi-extension` from the source manifest after `pi-ext-check`.
+- `make install-user` builds `nexdev`, installs it to `$HOME/.local/bin/nexdev`, and installs the Pi extension to `$HOME/.local/share/nexdev/pi-extension`.
 - `make pi-ext-clean` removes `bin/pi-extension`, extension `node_modules`, and TypeScript build info.
 - `make pi-ext-install-dev` symlinks the source extension into an explicit `PI_EXTENSION_DEV_DIR` after refusing empty or obviously unsafe destinations.
 

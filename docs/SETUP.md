@@ -12,8 +12,16 @@
 
 ```bash
 make build
-./bin/nexdev version
+./bin/nexdev --help
 ```
+
+Install Nexdev for the current user, including the Pi extension files used when launching from any project directory:
+
+```bash
+make install-user
+```
+
+This installs the binary to `$HOME/.local/bin/nexdev` and the Pi extension to `$HOME/.local/share/nexdev/pi-extension`.
 
 Compile-check the Pi extension:
 
@@ -69,6 +77,7 @@ The launcher does not pass provider API keys to Pi or expose Nexdev providers as
 
 Pi extension packaging:
 - Source checkouts use `extensions/nexdev/index.ts` directly.
+- `make install-user` installs distributable extension files to `$HOME/.local/share/nexdev/pi-extension` for use outside the source checkout.
 - Installed extension files are copied to a Nexdev-controlled user cache before launch.
 - `make pi-ext-clean` removes extension build/cache inputs under the repo build paths.
 - `make pi-ext-install-dev PI_EXTENSION_DEV_DIR=<dir>` symlinks the source extension into an explicit Pi development extension directory.

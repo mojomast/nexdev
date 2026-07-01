@@ -28,6 +28,8 @@ var launchBubbleteaFallback = func(cmd *cobra.Command, args []string) error {
 	return tuiCmd.RunE(cmd, args)
 }
 
+var renderLaunchIntro = BannerAnimated
+
 // Execute runs the root command
 func Execute(ver string) error {
 	version = ver
@@ -50,6 +52,7 @@ durable SQLite state, HTTP/SSE control plane, and MCP-compatible tools.`,
 		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if shouldLaunchPiByDefault() {
+				renderLaunchIntro()
 				return launchPiDefault(cmd.Context())
 			}
 			if shouldLaunchBubbleteaFallbackByDefault() {

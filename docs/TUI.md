@@ -22,6 +22,8 @@ pi --extension <nexdev-extension-index.ts>
 
 The Pi process inherits stdin/stdout/stderr. Closing Pi returns Pi's exit status to Nexdev.
 
+Before Pi takes over the terminal, Nexdev renders a short animated ASCII intro. The intro is only shown for the default interactive Pi launch path; JSON, headless, noninteractive, `--no-tui`, and `--no-pi` paths do not render it.
+
 Requirements:
 - Pi tested version: 0.80.3.
 - Node: >=22.19.0 for extension checks/builds.
@@ -32,7 +34,7 @@ Provider selection:
 - Nexdev provider credentials are still not bridged into Pi custom-provider config; Pi reads its own provider env vars such as `OPENROUTER_API_KEY`.
 
 Pi extension UI:
-- Welcome banner above the editor.
+- Animated welcome banner above the editor, followed by the steady menu hint/status banner.
 - One-line status footer with run, status, stage, task, and cost when available.
 - `Ctrl+N` opens the Nexdev overlay menu.
 - `/nexdev` is the fallback opener if `Ctrl+N` conflicts.
@@ -49,8 +51,9 @@ Pi menu coverage:
 - Skip/Cancel: confirmation first, then `POST /skip` or `POST /cancel`.
 - Steer: multiline editor, then `POST /steer`.
 - Detour: confirmation/context, then `POST /detour`.
+- New Run: editor prompt, then `POST /runs`.
 
-Deferred Pi menu items render explicit disabled states rather than blank screens. New Run (`POST /runs` overlay UX) and provider-test overlay UX remain deferred.
+Deferred Pi menu items render explicit disabled states rather than blank screens. Provider-test overlay UX remains deferred.
 
 Security behavior:
 - Pi is a control-plane client. It does not own pipeline state.
@@ -92,6 +95,12 @@ Build distribution files:
 make pi-ext-build
 ```
 
+Install Nexdev and the Pi extension for the current user so `nexdev` works from any project directory:
+
+```bash
+make install-user
+```
+
 Clean extension artifacts:
 
 ```bash
@@ -104,7 +113,7 @@ Install a development symlink:
 make pi-ext-install-dev PI_EXTENSION_DEV_DIR=<explicit-pi-dev-extension-dir>
 ```
 
-The launcher prefers source checkout loading from `extensions/nexdev/index.ts`. Installed extension files are copied to a Nexdev-controlled user cache under `nexdev/pi-extension/pi-0.80.3` before launch with manifest and symlink-escape checks.
+The launcher prefers source checkout loading from `extensions/nexdev/index.ts`. Outside the source checkout, it uses installed extension files from locations such as `$HOME/.local/share/nexdev/pi-extension`, then copies them to a Nexdev-controlled user cache under `nexdev/pi-extension/pi-0.80.3` before launch with manifest and symlink-escape checks.
 
 ## Legacy Imported Notes
 

@@ -23,6 +23,23 @@ Release-gate commands:
 - `go test -race ./...`
 - `govulncheck ./...`, after installing `govulncheck` and making its install directory, commonly `$HOME/go/bin`, available on `PATH`; release checks use Go `1.26.4`
 
+## Install For Any Project Directory
+
+Prerequisites:
+- Go 1.26.4.
+- Node 22.19.0 or newer for the Pi extension check/build.
+- Pi coding agent 0.80.3 or newer on `PATH`.
+
+Install Nexdev for the current user:
+
+```bash
+make install-user
+```
+
+This rebuilds the `nexdev` binary, compile-checks/prepares the Pi extension, installs the binary to `$HOME/.local/bin/nexdev`, and installs the Pi extension files to `$HOME/.local/share/nexdev/pi-extension`.
+
+Ensure `$HOME/.local/bin` is on `PATH`, then run `nexdev` from any project directory. The launcher prefers a source checkout extension when available and otherwise uses the installed extension files.
+
 Local control-plane smoke:
 - `nexdev auth token create --role operator --ttl 30d`
 - `nexdev serve`

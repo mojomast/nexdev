@@ -12,7 +12,9 @@ const FOOTER_MAX = 160;
 
 interface WidgetSession {
   pollAbort: AbortController;
-  intervalID: ReturnType<typeof globalThis.setInterval>;
+  intervalID?: ReturnType<typeof globalThis.setInterval>;
+  welcomeInterval?: ReturnType<typeof globalThis.setInterval>;
+  welcomeTimeout?: ReturnType<typeof globalThis.setTimeout>;
 }
 
 const sessions = new WeakMap<ExtensionContext, WidgetSession>();
@@ -27,7 +29,13 @@ export function startNexdevWidgets(ctx: ExtensionContext): void {
   }
 
   stopNexdevWidgets(ctx);
-  renderWelcomeBanner(ctx);
+  const pollAbort = new AbortController();
+  const session: WidgetSession = { pollAbort };
+  const welcomeTimers = startWelcomeAnimation(ctx);
+  session.welcomeInterval = welcomeTimers.intervalID;
+  session.welcomeTimeout = welcomeTimers.timeoutID;
+  sessions.set(ctx, session);
+
   showNexdevMenuHint(ctx);
   ctx.ui.setStatus(RUN_STATUS_KEY, "Nexdev: status pending");
 
@@ -39,7 +47,6 @@ export function startNexdevWidgets(ctx: ExtensionContext): void {
     return;
   }
 
-  const pollAbort = new AbortController();
   const poll = (): void => {
     void client
       .getStatus(pollAbort.signal)
@@ -57,14 +64,22 @@ export function startNexdevWidgets(ctx: ExtensionContext): void {
 
   poll();
   const intervalID = globalThis.setInterval(poll, POLL_INTERVAL_MS);
-  sessions.set(ctx, { pollAbort, intervalID });
+  session.intervalID = intervalID;
 }
 
 export function stopNexdevWidgets(ctx: ExtensionContext): void {
   const session = sessions.get(ctx);
   if (session !== undefined) {
     session.pollAbort.abort();
-    globalThis.clearInterval(session.intervalID);
+    if (session.intervalID !== undefined) {
+      globalThis.clearInterval(session.intervalID);
+    }
+    if (session.welcomeInterval !== undefined) {
+      globalThis.clearInterval(session.welcomeInterval);
+    }
+    if (session.welcomeTimeout !== undefined) {
+      globalThis.clearTimeout(session.welcomeTimeout);
+    }
     sessions.delete(ctx);
   }
 
@@ -77,15 +92,54 @@ export function stopNexdevWidgets(ctx: ExtensionContext): void {
   ctx.ui.setWidget(HINT_WIDGET_KEY, undefined, { placement: "belowEditor" });
 }
 
+function startWelcomeAnimation(ctx: ExtensionContext): {
+  intervalID: ReturnType<typeof globalThis.setInterval>;
+  timeoutID: ReturnType<typeof globalThis.setTimeout>;
+} {
+  const frames = [
+    "[boot] warming local-first engines...",
+    "[db] sqlite state online...",
+    "[http] loopback control plane linked...",
+    "[pi] terminal cockpit armed...",
+  ];
+  let frame = 0;
+  const render = (): void => {
+    const fallback = frames[frames.length - 1] ?? "ready";
+    ctx.ui.setWidget(WELCOME_WIDGET_KEY, welcomeLines(frames[frame] ?? fallback), {
+      placement: "aboveEditor",
+    });
+    frame = Math.min(frame + 1, frames.length - 1);
+  };
+
+  render();
+  const intervalID = globalThis.setInterval(render, 180);
+  const timeoutID = globalThis.setTimeout(() => {
+    globalThis.clearInterval(intervalID);
+    renderWelcomeBanner(ctx);
+  }, 1_100);
+  return { intervalID, timeoutID };
+}
+
 export function renderWelcomeBanner(ctx: ExtensionContext): void {
   if (!canUseNexdevWidgets(ctx)) {
     return;
   }
   ctx.ui.setWidget(
     WELCOME_WIDGET_KEY,
-    ["Nexdev ready. Press Ctrl+N to open the Nexdev menu, or use /nexdev as a fallback."],
+    welcomeLines("ready :: Ctrl+N opens menu :: /nexdev fallback"),
     { placement: "aboveEditor" },
   );
+}
+
+function welcomeLines(status: string): string[] {
+  return [
+    " _   _               _            ",
+    "| \\ | | _____  ____| | _____   __",
+    "|  \\| |/ _ \\ \\/ / _` |/ _ \\ \\ / /",
+    "| |\\  |  __/>  < (_| |  __/\\ V / ",
+    "|_| \\_|\\___/_/\\_\\__,_|\\___| \\_/  ",
+    `local-first coding harness :: ${status}`,
+  ];
 }
 
 export function showNexdevMenuHint(ctx: ExtensionContext): void {

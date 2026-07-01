@@ -214,11 +214,12 @@ func TestRootNoSubcommandDispatchesPiOnlyWhenInteractive(t *testing.T) {
 
 func TestRootNoSubcommandRunELaunchesPiWhenInteractive(t *testing.T) {
 	oldLookPath, oldRun, oldProjectDir, oldControlURL, oldToken := lookPathBinary, runPiProcess, projectDir, controlURL, controlToken
-	oldJSON, oldNoTUI, oldNoPi, oldTTY := jsonOutput, noTUI, noPi, stdinIsTTY
+	oldJSON, oldNoTUI, oldNoPi, oldTTY, oldIntro := jsonOutput, noTUI, noPi, stdinIsTTY, renderLaunchIntro
 	defer func() {
 		lookPathBinary, runPiProcess = oldLookPath, oldRun
 		projectDir, controlURL, controlToken = oldProjectDir, oldControlURL, oldToken
 		jsonOutput, noTUI, noPi, stdinIsTTY = oldJSON, oldNoTUI, oldNoPi, oldTTY
+		renderLaunchIntro = oldIntro
 	}()
 	lookPathBinary = func(string) (string, error) { return "/usr/bin/pi", nil }
 	projectDir = t.TempDir()
@@ -229,6 +230,8 @@ func TestRootNoSubcommandRunELaunchesPiWhenInteractive(t *testing.T) {
 	noPi = false
 	stdinIsTTY = func() bool { return true }
 	called := false
+	introCalled := false
+	renderLaunchIntro = func() { introCalled = true }
 	runPiProcess = func(ctx context.Context, binary string, args []string, env []string) error {
 		called = true
 		return nil
@@ -239,19 +242,25 @@ func TestRootNoSubcommandRunELaunchesPiWhenInteractive(t *testing.T) {
 	if !called {
 		t.Fatal("root no-subcommand did not launch Pi")
 	}
+	if !introCalled {
+		t.Fatal("root no-subcommand did not render launch intro before Pi")
+	}
 }
 
 func TestRootNoSubcommandNoPiLaunchesBubbleteaFallback(t *testing.T) {
-	oldJSON, oldNoTUI, oldNoPi, oldTTY, oldFallback := jsonOutput, noTUI, noPi, stdinIsTTY, launchBubbleteaFallback
+	oldJSON, oldNoTUI, oldNoPi, oldTTY, oldFallback, oldIntro := jsonOutput, noTUI, noPi, stdinIsTTY, launchBubbleteaFallback, renderLaunchIntro
 	defer func() {
 		jsonOutput, noTUI, noPi = oldJSON, oldNoTUI, oldNoPi
 		stdinIsTTY, launchBubbleteaFallback = oldTTY, oldFallback
+		renderLaunchIntro = oldIntro
 	}()
 	jsonOutput = false
 	noTUI = false
 	noPi = true
 	stdinIsTTY = func() bool { return true }
 	called := false
+	introCalled := false
+	renderLaunchIntro = func() { introCalled = true }
 	launchBubbleteaFallback = func(cmd *cobra.Command, args []string) error {
 		called = true
 		return nil
@@ -263,14 +272,20 @@ func TestRootNoSubcommandNoPiLaunchesBubbleteaFallback(t *testing.T) {
 	if !called {
 		t.Fatal("root --no-pi did not launch Bubbletea fallback")
 	}
+	if introCalled {
+		t.Fatal("root --no-pi rendered Pi launch intro")
+	}
 }
 
 func TestRootNoSubcommandSafeModesShowHelp(t *testing.T) {
-	oldJSON, oldNoTUI, oldNoPi, oldTTY, oldRun, oldFallback := jsonOutput, noTUI, noPi, stdinIsTTY, runPiProcess, launchBubbleteaFallback
+	oldJSON, oldNoTUI, oldNoPi, oldTTY, oldRun, oldFallback, oldIntro := jsonOutput, noTUI, noPi, stdinIsTTY, runPiProcess, launchBubbleteaFallback, renderLaunchIntro
 	defer func() {
 		jsonOutput, noTUI, noPi = oldJSON, oldNoTUI, oldNoPi
 		stdinIsTTY, runPiProcess, launchBubbleteaFallback = oldTTY, oldRun, oldFallback
+		renderLaunchIntro = oldIntro
 	}()
+	introCalled := false
+	renderLaunchIntro = func() { introCalled = true }
 	stdinIsTTY = func() bool { return false }
 	runPiProcess = func(context.Context, string, []string, []string) error {
 		t.Fatal("noninteractive root launched Pi")
@@ -287,15 +302,24 @@ func TestRootNoSubcommandSafeModesShowHelp(t *testing.T) {
 	if err := rootCmd.RunE(rootCmd, nil); err != nil {
 		t.Fatal(err)
 	}
+	if introCalled {
+		t.Fatal("noninteractive root rendered Pi launch intro")
+	}
 	stdinIsTTY = func() bool { return true }
 	jsonOutput = true
 	if err := rootCmd.RunE(rootCmd, nil); err != nil {
 		t.Fatal(err)
 	}
+	if introCalled {
+		t.Fatal("json root rendered Pi launch intro")
+	}
 	jsonOutput = false
 	noTUI = true
 	if err := rootCmd.RunE(rootCmd, nil); err != nil {
 		t.Fatal(err)
+	}
+	if introCalled {
+		t.Fatal("--no-tui root rendered Pi launch intro")
 	}
 }
 

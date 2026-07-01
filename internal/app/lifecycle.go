@@ -151,7 +151,9 @@ func (r *Runtime) NewControlPlaneServer() (*controlplane.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts := []controlplane.Option{}
+	opts := []controlplane.Option{
+		controlplane.WithRunStarter(&RunStarterService{runtime: r}),
+	}
 	if exec := r.executorForLatestRun(context.Background()); exec != nil {
 		opts = append(opts, controlplane.WithExecutor(exec))
 	}

@@ -1,12 +1,16 @@
-.PHONY: build test clean install install-system uninstall lint fmt vet run help generate pi-ext-deps pi-ext-check pi-ext-build pi-ext-clean pi-ext-install-dev
+.PHONY: build test clean install install-user install-system uninstall lint fmt vet run help generate pi-ext-deps pi-ext-check pi-ext-build pi-ext-clean pi-ext-install-dev
 
 # Build variables
-BINARY_NAME=geoffrussy
+BINARY_NAME=nexdev
 VERSION?=0.1.0
 BUILD_DIR=bin
 GO=go
 GOFLAGS=-v
 LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
+CMD_DIR=./cmd/nexdev
+USER_PREFIX?=$(HOME)/.local
+USER_BIN_DIR?=$(USER_PREFIX)/bin
+USER_SHARE_DIR?=$(USER_PREFIX)/share/nexdev
 PI_EXT_DIR=extensions/nexdev
 PI_EXT_DIST=$(BUILD_DIR)/pi-extension
 
@@ -22,7 +26,7 @@ help:
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/geoffrussy
+	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
 
 ## test: Run all tests
 test:
@@ -110,21 +114,34 @@ clean:
 	@rm -f coverage.txt
 	@$(GO) clean
 
-## install: Install binary to GOPATH/bin
-install:
-	@echo "Installing $(BINARY_NAME) to GOPATH/bin..."
-	$(GO) install $(LDFLAGS) ./cmd/geoffrussy
+## install: Build and install Nexdev plus Pi extension to ~/.local
+install: install-user
+
+## install-user: Build and install Nexdev plus Pi extension to ~/.local
+install-user: build pi-ext-build
+	@echo "Installing $(BINARY_NAME) to $(USER_BIN_DIR)..."
+	@mkdir -p $(USER_BIN_DIR)
+	@cp $(BUILD_DIR)/$(BINARY_NAME) $(USER_BIN_DIR)/$(BINARY_NAME)
+	@echo "Installing Pi extension to $(USER_SHARE_DIR)/pi-extension..."
+	@mkdir -p $(USER_SHARE_DIR)
+	@rm -rf $(USER_SHARE_DIR)/pi-extension
+	@cp -R $(PI_EXT_DIST) $(USER_SHARE_DIR)/pi-extension
 
 ## install-system: Install binary to system PATH (requires sudo)
-install-system:
-	@echo "Installing $(BINARY_NAME) to system..."
-	@./install.sh
+install-system: build pi-ext-build
+	@echo "Installing $(BINARY_NAME) to /usr/local/bin and Pi extension to /usr/local/share/nexdev/pi-extension..."
+	@install -d /usr/local/bin /usr/local/share/nexdev
+	@install -m 0755 $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
+	@rm -rf /usr/local/share/nexdev/pi-extension
+	@cp -R $(PI_EXT_DIST) /usr/local/share/nexdev/pi-extension
 
 ## uninstall: Remove from system PATH
 uninstall:
 	@echo "Uninstalling $(BINARY_NAME)..."
 	@rm -f /usr/local/bin/$(BINARY_NAME) 2>/dev/null || true
-	@rm -f $(HOME)/bin/$(BINARY_NAME) 2>/dev/null || true
+	@rm -f $(USER_BIN_DIR)/$(BINARY_NAME) 2>/dev/null || true
+	@rm -rf $(USER_SHARE_DIR)/pi-extension 2>/dev/null || true
+	@rm -rf /usr/local/share/nexdev/pi-extension 2>/dev/null || true
 	@echo "$(BINARY_NAME) removed from system"
 
 ## lint: Run linters
@@ -152,12 +169,12 @@ run: build
 build-all:
 	@echo "Building for all platforms..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/geoffrussy
-	GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/geoffrussy
-	GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/geoffrussy
-	GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/geoffrussy
-	GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/geoffrussy
-	GOOS=windows GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe ./cmd/geoffrussy
+	GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(CMD_DIR)
+	GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 $(CMD_DIR)
+	GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(CMD_DIR)
+	GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(CMD_DIR)
+	GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(CMD_DIR)
+	GOOS=windows GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe $(CMD_DIR)
 
 ## docker-build: Build Docker image
 docker-build:
