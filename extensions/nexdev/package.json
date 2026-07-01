@@ -1,0 +1,24 @@
+{
+  "name": "@mojomast/nexdev-pi-extension",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Nexdev extension scaffold for Pi coding agent.",
+  "pi": {
+    "testedVersion": "0.80.3"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

@@ -6,7 +6,7 @@ It brings together Go execution foundations, a pre-development planning pipeline
 
 ## Current Status
 
-This repository has completed final TASK-01 through TASK-10 stabilization. The fake-provider pipeline, control plane, SSE follow, policy-gated verify runner, generated OpenAPI types, cost summary, git-diff changed files, stale-lock handling, hostile security fixtures, SSE stress coverage, and CLI cleanup are implemented and verified.
+This repository has completed final TASK-01 through TASK-10 stabilization and the Pi terminal integration documentation pass. The fake-provider pipeline, control plane, SSE follow, policy-gated verify runner, generated OpenAPI types, cost summary, git-diff changed files, stale-lock handling, hostile security fixtures, SSE stress coverage, CLI cleanup, and Pi default terminal surface are implemented at their assigned scope.
 
 Explicit deferrals remain: full real-provider pipeline execution, web UI assets, artifact content opening, full OpenAPI response validation, and exposing git rename `old_path` in shared changed-file artifact JSON.
 
@@ -15,6 +15,7 @@ Current local verification commands:
 - `go vet ./...`
 - `go mod verify`
 - `./scripts/e2e_fake_provider.sh`
+- `make pi-ext-check`
 - `PATH="$HOME/go/bin:$PATH" govulncheck ./...`
 - `PATH="$HOME/go/bin:$PATH" ./scripts/release_check.sh`
 
@@ -31,6 +32,7 @@ Local control-plane smoke:
 - `nexdev artifacts list`
 - `nexdev provider list`
 - `nexdev tui`
+- `nexdev` to launch Pi in an interactive terminal, with `nexdev tui` or `nexdev --no-pi` for Bubbletea fallback
 - `nexdev verify`
 
 Fake-provider E2E smoke:
@@ -49,6 +51,8 @@ Safe defaults:
 - The project lock is held while `serve` is running and released on shutdown.
 - Token plaintext is printed only when created; SQLite stores only the token hash and metadata.
 - Quitting the TUI exits only the terminal client; cancel/skip actions require explicit confirmation and route through control-plane services.
+- `nexdev` launches Pi by default only in interactive terminal mode. `--no-pi` uses Bubbletea fallback, and `--no-tui`/`--json` avoid terminal UI launch.
+- Pi receives only `NEXDEV_CONTROL_URL`, optional `NEXDEV_CONTROL_TOKEN`, `NEXDEV_PROJECT_DIR`, and optional `NEXDEV_RUN_ID`; provider credentials are not bridged into Pi custom-provider config.
 - The fake-provider run path is explicit opt-in only; fake is not registered in the production provider registry.
 - Fake E2E uses the safe fake worker and does not execute shell or network commands.
 - Real-provider smoke tests are disabled by default and require explicit env gates, provider credentials, a tiny spend cap, and a strict timeout before any provider call is made.

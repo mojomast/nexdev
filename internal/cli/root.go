@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -13,6 +15,7 @@ var (
 	projectDir   string
 	stateDir     string
 	noTUI        bool
+	noPi         bool
 	jsonOutput   bool
 	logLevel     string
 	profile      string
@@ -21,10 +24,21 @@ var (
 	rootCmd      *cobra.Command
 )
 
+var launchBubbleteaFallback = func(cmd *cobra.Command, args []string) error {
+	return tuiCmd.RunE(cmd, args)
+}
+
 // Execute runs the root command
 func Execute(ver string) error {
 	version = ver
-	return rootCmd.Execute()
+	if err := rootCmd.Execute(); err != nil {
+		var exitErr piExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+		return err
+	}
+	return nil
 }
 
 func init() {
@@ -35,9 +49,18 @@ func init() {
 durable SQLite state, HTTP/SSE control plane, and MCP-compatible tools.`,
 		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if shouldLaunchPiByDefault() {
+				return launchPiDefault(cmd.Context())
+			}
+			if shouldLaunchBubbleteaFallbackByDefault() {
+				return launchBubbleteaFallback(cmd, args)
+			}
 			return cmd.Help()
 		},
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			if cmd == rootCmd && (shouldLaunchPiByDefault() || shouldLaunchBubbleteaFallbackByDefault()) {
+				return
+			}
 			if cmd.Name() != "__complete" && !jsonOutput {
 				BannerAnimated()
 			}
@@ -50,6 +73,7 @@ durable SQLite state, HTTP/SSE control plane, and MCP-compatible tools.`,
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ./nexdev.yaml)")
 	rootCmd.PersistentFlags().StringVar(&stateDir, "state-dir", "", "project state directory (default: .nexdev)")
 	rootCmd.PersistentFlags().BoolVar(&noTUI, "no-tui", false, "disable TUI behavior")
+	rootCmd.PersistentFlags().BoolVar(&noPi, "no-pi", false, "launch the Bubbletea fallback instead of Pi for root interactive mode")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "write JSON output")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level: debug, info, warn, error")
 	rootCmd.PersistentFlags().StringVar(&profile, "profile", "", "profile: dev, trusted-lan, ci")
@@ -70,6 +94,7 @@ durable SQLite state, HTTP/SSE control plane, and MCP-compatible tools.`,
 	rootCmd.AddCommand(verifyCmd)
 	rootCmd.AddCommand(historyCmd)
 	rootCmd.AddCommand(serveCmd)
+	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(authCmd)
 	rootCmd.AddCommand(eventsCmd)
 	rootCmd.AddCommand(detourCmd)

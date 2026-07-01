@@ -11,7 +11,7 @@ import (
 )
 
 func TestM12CommandTreeIncludesServeAuthAndControlCommands(t *testing.T) {
-	want := []string{"init", "run", "develop", "verify", "status", "plan", "review", "navigate", "detour", "steer", "pause", "resume", "cancel", "blockers", "provider", "events", "artifacts", "history", "config", "auth", "serve", "doctor"}
+	want := []string{"init", "run", "develop", "verify", "status", "plan", "review", "navigate", "detour", "steer", "pause", "resume", "cancel", "blockers", "provider", "events", "artifacts", "history", "config", "auth", "serve", "tui", "doctor"}
 	for _, name := range want {
 		if _, _, err := rootCmd.Find([]string{name}); err != nil {
 			t.Fatalf("command %q not registered: %v", name, err)
@@ -20,7 +20,10 @@ func TestM12CommandTreeIncludesServeAuthAndControlCommands(t *testing.T) {
 	if rootCmd.Use != "nexdev" {
 		t.Fatalf("root use = %q", rootCmd.Use)
 	}
-	legacy := []string{"interview", "design", "validate", "stats", "quota", "checkpoint", "rollback", "mcp-server", "tui", "version"}
+	if rootCmd.PersistentFlags().Lookup("no-pi") == nil {
+		t.Fatal("global --no-pi fallback flag is not registered")
+	}
+	legacy := []string{"interview", "design", "validate", "stats", "quota", "checkpoint", "rollback", "mcp-server", "version"}
 	for _, name := range legacy {
 		if cmd, _, err := rootCmd.Find([]string{name}); err == nil && cmd != nil && cmd.Name() == name {
 			t.Fatalf("legacy command %q is still reachable", name)
@@ -47,13 +50,13 @@ func TestRootHelpShowsOnlySpecCommandsAndNoGeoffrussyState(t *testing.T) {
 	if parts := strings.SplitN(commandsSection, "Flags:", 2); len(parts) == 2 {
 		commandsSection = parts[0]
 	}
-	want := []string{"init", "run", "develop", "verify", "status", "plan", "review", "navigate", "detour", "steer", "pause", "resume", "cancel", "blockers", "provider", "events", "artifacts", "history", "config", "auth", "serve", "doctor"}
+	want := []string{"init", "run", "develop", "verify", "status", "plan", "review", "navigate", "detour", "steer", "pause", "resume", "cancel", "blockers", "provider", "events", "artifacts", "history", "config", "auth", "serve", "tui", "doctor"}
 	for _, name := range want {
 		if !strings.Contains(commandsSection, "  "+name+" ") {
 			t.Fatalf("help missing spec command %q:\n%s", name, help)
 		}
 	}
-	mustNotContain := []string{"interview", "design", "validate", "stats", "quota", "checkpoint", "rollback", "mcp-server", "tui", "version", "help"}
+	mustNotContain := []string{"interview", "design", "validate", "stats", "quota", "checkpoint", "rollback", "mcp-server", "version", "help"}
 	for _, text := range mustNotContain {
 		if strings.Contains(commandsSection, "  "+text+" ") {
 			t.Fatalf("help contains legacy text %q:\n%s", text, help)

@@ -165,24 +165,26 @@ Every item below must be reachable from inside the Pi TUI before M11 closes. The
 
 | Pi Menu Path | Bubbletea Equivalent | Endpoint | Status |
 |---|---|---|---|
-| Monitor → Overview | `ViewOverview` | `GET /status` | ☐ |
-| Monitor → Events | `ViewEvents` | SSE or `GET /events` | ☐ |
-| Monitor → Plan / Tasks | `ViewPlan` | `GET /plan` | ☐ |
-| Monitor → Blockers | `ViewBlockers` | `/status` blockers or dedicated | ☐ |
-| Monitor → Artifacts | `ViewArtifacts` | `GET /artifacts` | ☐ |
-| Control → Pause / Resume | key `p` | `POST /pause`, `POST /resume` | ☐ |
-| Control → Skip Task | key `k` | `POST /skip` | ☐ |
-| Control → Cancel Run | key `c` | `POST /cancel` | ☐ |
-| Control → Steer | key `s` | `POST /steer` | ☐ |
-| Control → Request Detour | key `d` | `POST /detour` | ☐ |
-| Providers → List Providers | provider list view | `GET /providers` or config | ☐ |
-| New Run | new run flow | `POST /runs` or equivalent | ☐ (deferred) |
-| Config | config view | `GET /config` | ☐ |
-| Run status footer | status bar | `GET /status` poll | ☐ |
-| Welcome banner | N/A | N/A | ☐ |
-| Ctrl+N shortcut | N/A | N/A | ☐ |
+| Monitor → Overview | `ViewOverview` | `GET /status` | ✅ implemented |
+| Monitor → Events | `ViewEvents` | SSE or `GET /events` | ✅ implemented with bounded `GET /events` polling |
+| Monitor → Plan / Tasks | `ViewPlan` | `GET /plan` | ✅ implemented read-only |
+| Monitor → Blockers | `ViewBlockers` | `/status` blockers or dedicated | ✅ implemented from `GET /status` blockers |
+| Monitor → Artifacts | `ViewArtifacts` | `GET /artifacts` | ✅ implemented read-only |
+| Control → Pause / Resume | key `p` | `POST /pause`, `POST /resume` | ✅ implemented |
+| Control → Skip Task | key `k` | `POST /skip` | ✅ implemented with confirmation |
+| Control → Cancel Run | key `c` | `POST /cancel` | ✅ implemented with confirmation |
+| Control → Steer | key `s` | `POST /steer` | ✅ implemented with multiline Pi editor |
+| Control → Request Detour | key `d` | `POST /detour` | ✅ implemented with confirmation/context |
+| Providers → List Providers | provider list view | `GET /providers` or config | ✅ implemented via `GET /providers` |
+| New Run | new run flow | `POST /runs` or equivalent | ☐ deferred: overlay UX for `POST /runs` remains disabled |
+| Config | config view | `GET /config` | ✅ implemented read-only/redacted |
+| Run status footer | status bar | `GET /status` poll | ✅ implemented |
+| Welcome banner | N/A | N/A | ✅ implemented |
+| Ctrl+N shortcut | N/A | N/A | ✅ implemented, with `/nexdev` fallback if shortcut registration conflicts |
 
 Deferred items must render an explicit disabled state with the exact missing endpoint, not a blank screen.
+
+PI-09 status note: Provider listing is implemented. Provider-test overlay UX remains intentionally deferred because provider testing is service-gated and real-provider execution remains explicit-env-gated. New Run remains deferred until `POST /runs` overlay UX is assigned.
 
 ---
 

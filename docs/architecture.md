@@ -1,6 +1,6 @@
 # Nexdev Architecture Plan
 
-**Status:** Final stabilization reflects implemented behavior through TASK-10.
+**Status:** Final stabilization plus Pi terminal integration documentation through PI-09.
 **Canonical source:** `SPEC.md`.
 
 ## 1. Repository Status
@@ -311,6 +311,16 @@ Current M13 terminal TUI behavior:
 - Pause/resume, skip, detour, steer, and cancel actions call the injected client/service path. The TUI does not call providers, execute shell commands, implement task ordering, or own pipeline state. Normal quit exits the terminal client without cancelling a run; cancel and skip require explicit confirmation.
 - Displayed event/task/blocker/artifact text is treated as untrusted and passed through secret redaction/control-character scrubbing before rendering.
 - Embedded web UI files remain unimplemented and are intentionally not created by M13 terminal TUI work.
+
+Current PI-06 through PI-08 Pi terminal integration behavior:
+- In an interactive terminal, `nexdev` with no subcommand now launches Pi as the default terminal coding surface unless `--no-pi`, `--no-tui`, or `--json` is set. The process is spawned as `pi --extension <path>` with stdio inherited, and Nexdev propagates Pi's non-zero exit code.
+- `internal/cli/pi.go` starts or attaches to the local loopback control-plane before launching Pi when `--control-url` is not supplied. With `--control-url`, Pi is launched as a remote control-plane client using that URL and the provided `--token` or `NEXDEV_CONTROL_TOKEN`.
+- The launcher passes only the Pi control environment needed by the extension: `NEXDEV_CONTROL_URL`, optional `NEXDEV_CONTROL_TOKEN`, `NEXDEV_PROJECT_DIR`, and optional `NEXDEV_RUN_ID`. Provider API keys and provider router configuration are not exported as Pi custom-provider credentials.
+- Pi extension lookup prefers a source checkout first by searching upward for `extensions/nexdev/index.ts` from the project root/current directory. Installed extension directories are then copied to the user cache under `nexdev/pi-extension/pi-0.80.3` before launch. Cache writes are limited to a fixed manifest, reject traversal/symlink destinations, and do not write under the project root.
+- The checked extension package records Pi tested version `0.80.3` and Node `>=22.19.0`. The extension registers `/nexdev` and tries to register `Ctrl+N`; if the shortcut conflicts, `/nexdev` remains the fallback menu opener.
+- Inside Pi, the extension renders a welcome banner, a menu hint, a status footer, and an overlay menu. Monitor views read status, events, plan/tasks, blockers, artifacts, providers, and redacted config from HTTP control-plane endpoints. Control actions call pause/resume, skip, cancel, steer, and detour endpoints through the extension client.
+- `nexdev tui` remains the explicit Bubbletea fallback. `nexdev --no-pi` launches the Bubbletea fallback in root interactive mode. `nexdev run --no-tui` remains the headless run path and does not launch Pi.
+- The Pi extension is a control-plane client only. It does not call providers directly, execute shell commands, expose model-callable tools, implement task ordering, or own pipeline state.
 
 Final stabilization notes:
 - Documentation now treats M0-M19 plus TASK-01 through TASK-10 behavior as implemented at assigned scope.

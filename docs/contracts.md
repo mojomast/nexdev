@@ -764,13 +764,15 @@ Rules:
 - `nexdev steer` maps to `POST /steer` semantics.
 - `nexdev init --import-devussy PATH` is required by migration plan.
 
-Current M12/M16/TASK-02/TASK-10 implementation:
+Current M12/M16/TASK-02/TASK-10/PI-06 through PI-08 implementation:
 - Root command identity and global flags are now `nexdev`-oriented and include `--project-dir`, `--config`, `--state-dir`, `--no-tui`, `--json`, `--log-level`, `--profile`, `--control-url`, and `--token`.
+- Root interactive mode launches Pi by default when stdin is a TTY and `--no-pi`, `--no-tui`, and `--json` are not set. `--no-pi` requests the Bubbletea fallback for root interactive mode. `nexdev tui` remains the explicit Bubbletea command.
 - `nexdev serve` opens project-local state, acquires `.nexdev/run/project.lock`, builds the M10/M11 control-plane server, and releases the lock during shutdown.
 - `nexdev auth token create|list|revoke` manages project-local opaque bearer tokens. Token hashes are stored in SQLite; plaintext token values are returned only from `create`.
 - `nexdev status --json`, `events`, `provider list`, and `artifacts list` read through the same control-plane handler locally or through HTTP when `--control-url` is set.
 - `nexdev pause`, `resume --control-url`, `cancel`, `steer`, `detour`, `blockers resolve`, and `provider test` are client adapters over HTTP control-plane routes. Without `--control-url`, mutating control commands fail with a structured CLI error instead of touching state directly.
 - `nexdev run --fake-provider --no-tui --json [request]` runs the deterministic local fake-provider pipeline through `internal/app`. Local `run` without `--fake-provider` returns an explicit deferred error until real-provider run wiring is assigned.
+- `nexdev run --no-tui` remains headless and does not launch Pi or Bubbletea. JSON/headless modes are still the CI-safe surfaces.
 - `nexdev run` output in JSON mode includes `project_id`, `run_id`, `status`, artifact paths, and `event_count`. The fake run writes required stage artifacts under `.nexdev/artifacts/`, persists events, and completes at canonical stage `complete`.
 - `events --follow` follows local or remote event streams, reconnects with `Last-Event-ID`, exits on cancellation/SIGINT, and supports JSON lines.
 - Root help exposes only spec command rows and no reachable root `.geoffrussy` state path. Legacy imported packages may still contain unreachable compatibility code, but root command output and no-subcommand execution do not probe legacy state.
@@ -800,6 +802,47 @@ Implemented M13 behavior:
 Implemented M13 tests:
 - `go test ./internal/tui` covers snapshot rendering, key navigation, disabled service actions, secret redaction, normal quit behavior, and explicit confirmation for cancel/skip.
 - `go test ./internal/cli` covers command registration including `tui`.
+
+## 14.2 Pi Terminal Surface Contract
+
+Authoritative implementation:
+- `internal/cli/pi.go`
+- `internal/cli/root.go`
+- `extensions/nexdev/*`
+- `Makefile`
+
+Default launch behavior:
+- `nexdev` with no subcommand launches Pi in interactive terminal mode when Pi is available and no disabling flags are set.
+- The launcher runs `pi --extension <resolved index.ts>` with stdin/stdout/stderr inherited.
+- Missing Pi returns an actionable error that names Pi `0.80.3` or newer, Node `>=22.19.0`, and `nexdev tui` as the fallback.
+- `nexdev tui` and root `--no-pi` keep the Bubbletea fallback reachable. `--no-tui` and `--json` prevent default terminal UI launch.
+
+Environment passed to Pi:
+- `NEXDEV_CONTROL_URL`: local loopback server URL started by the launcher, or the explicit `--control-url` value.
+- `NEXDEV_CONTROL_TOKEN`: optional bearer token from `--token` or the existing environment.
+- `NEXDEV_PROJECT_DIR`: resolved project root.
+- `NEXDEV_RUN_ID`: latest known run ID when available.
+
+Security rules:
+- The Pi extension uses the Nexdev HTTP control plane and bearer auth only. It does not receive provider API keys from Nexdev and does not register Nexdev providers as Pi custom providers.
+- Token/auth strings are redacted from extension client errors, displayed details, footer text, and notifications.
+- Rendered control-plane data is treated as untrusted display text and sanitized before terminal rendering.
+- Mutating menu actions call existing control-plane endpoints and are not exposed as autonomous model-callable tools.
+
+Extension packaging/cache behavior:
+- Source checkout loading wins: the launcher searches upward for `extensions/nexdev/index.ts` before consulting installed extension locations.
+- Installed extension directories are copied to a user cache path under `nexdev/pi-extension/pi-0.80.3` before launch.
+- Cache extraction is manifest-controlled and rejects absolute/traversal paths, source symlinks, and cache-destination symlink escapes.
+- Supported installed locations include a directory beside the executable, `/usr/local/share/nexdev/pi-extension`, and `$HOME/.local/share/nexdev/pi-extension`.
+
+Makefile targets:
+- `make pi-ext-check` installs extension dependencies and runs the TypeScript compile check.
+- `make pi-ext-build` prepares `bin/pi-extension` from the source manifest after `pi-ext-check`.
+- `make pi-ext-clean` removes `bin/pi-extension`, extension `node_modules`, and TypeScript build info.
+- `make pi-ext-install-dev` symlinks the source extension into an explicit `PI_EXTENSION_DEV_DIR` after refusing empty or obviously unsafe destinations.
+
+Provider bridge deferral:
+- Pi's own assistant provider configuration remains separate from Nexdev provider routing. Exposing Nexdev provider credentials to Pi custom providers is deferred until a future spec-management and security task defines explicit opt-in, redaction tests, and separate semantics for Pi chat versus Nexdev staged provider calls.
 
 ## 15. Contract Tests
 
@@ -833,6 +876,7 @@ Implemented first-wave tests:
 - `go test ./internal/pipeline ./internal/safety ./internal/cli` validates the final policy-gated verify runner, command policy checks, output caps, timeout/repair reporting, verify events, and CLI verify wiring.
 - `go test ./internal/git` validates git diff parsing, anchored changed-file detection support, path sanitization, and fallback behavior. Internal rename parsing includes `old_path`, but shared `contract.ChangedFile` artifact JSON does not expose it in v0.1.
 - `go test ./internal/controlplane` includes HTTP slow-reader SSE stress coverage.
+- `go test ./internal/cli` covers Pi launcher/fallback behavior, environment construction, and root command dispatch. `make pi-ext-check` compile-checks the Pi extension, and `scripts/release_check.sh` includes that target before Go release gates.
 
 ## 16. Test Fixture Contract
 

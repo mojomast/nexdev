@@ -1,4 +1,4 @@
-.PHONY: build test clean install install-system uninstall lint fmt vet run help generate
+.PHONY: build test clean install install-system uninstall lint fmt vet run help generate pi-ext-deps pi-ext-check pi-ext-build pi-ext-clean pi-ext-install-dev
 
 # Build variables
 BINARY_NAME=geoffrussy
@@ -7,6 +7,8 @@ BUILD_DIR=bin
 GO=go
 GOFLAGS=-v
 LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
+PI_EXT_DIR=extensions/nexdev
+PI_EXT_DIST=$(BUILD_DIR)/pi-extension
 
 # Default target
 all: build
@@ -32,6 +34,48 @@ generate:
 	@echo "Generating OpenAPI contract code..."
 	@mkdir -p api/generated
 	$(GO) tool oapi-codegen -generate types -package generated -o api/generated/nexdev_api.gen.go api/openapi.yaml
+
+pi-ext-deps:
+	@if [ -f $(PI_EXT_DIR)/package-lock.json ]; then \
+		npm ci --ignore-scripts --prefix $(PI_EXT_DIR); \
+	else \
+		npm install --ignore-scripts --prefix $(PI_EXT_DIR); \
+	fi
+
+## pi-ext-check: Compile-check the Pi extension
+pi-ext-check: pi-ext-deps
+	@echo "Checking Pi extension..."
+	npm --prefix $(PI_EXT_DIR) run check
+
+## pi-ext-build: Build/prep the Pi extension distribution
+pi-ext-build: pi-ext-check
+	@echo "Preparing Pi extension distribution..."
+	@rm -rf $(PI_EXT_DIST)
+	@mkdir -p $(PI_EXT_DIST)
+	@cp $(PI_EXT_DIR)/index.ts $(PI_EXT_DIST)/index.ts
+	@cp $(PI_EXT_DIR)/client.ts $(PI_EXT_DIST)/client.ts
+	@cp $(PI_EXT_DIR)/menu.ts $(PI_EXT_DIST)/menu.ts
+	@cp $(PI_EXT_DIR)/steer.ts $(PI_EXT_DIST)/steer.ts
+	@cp $(PI_EXT_DIR)/types.ts $(PI_EXT_DIST)/types.ts
+	@cp $(PI_EXT_DIR)/widgets.ts $(PI_EXT_DIST)/widgets.ts
+	@cp $(PI_EXT_DIR)/package.json $(PI_EXT_DIST)/package.json
+	@cp $(PI_EXT_DIR)/tsconfig.json $(PI_EXT_DIST)/tsconfig.json
+
+## pi-ext-clean: Remove Pi extension build artifacts
+pi-ext-clean:
+	@echo "Cleaning Pi extension artifacts..."
+	@rm -rf $(PI_EXT_DIST)
+	@rm -rf $(PI_EXT_DIR)/node_modules
+	@rm -f $(PI_EXT_DIR)/tsconfig.tsbuildinfo
+
+## pi-ext-install-dev: Explicitly install the Pi extension into PI_EXTENSION_DEV_DIR
+pi-ext-install-dev: pi-ext-build
+	@test -n "$(PI_EXTENSION_DEV_DIR)" || (echo "Set PI_EXTENSION_DEV_DIR to an explicit Pi dev extension directory" >&2; exit 2)
+	@case "$(PI_EXTENSION_DEV_DIR)" in "/"|"."|".."|"" ) echo "Refusing unsafe PI_EXTENSION_DEV_DIR=$(PI_EXTENSION_DEV_DIR)" >&2; exit 2;; esac
+	@mkdir -p "$(PI_EXTENSION_DEV_DIR)"
+	@rm -rf "$(PI_EXTENSION_DEV_DIR)/nexdev"
+	@ln -s "$(abspath $(PI_EXT_DIR))" "$(PI_EXTENSION_DEV_DIR)/nexdev"
+	@echo "Installed dev Pi extension symlink: $(PI_EXTENSION_DEV_DIR)/nexdev -> $(abspath $(PI_EXT_DIR))"
 
 ## test-unit: Run unit tests only
 test-unit:

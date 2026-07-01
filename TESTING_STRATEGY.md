@@ -1,6 +1,6 @@
 # Nexdev Testing Strategy
 
-**Status:** Final stabilization reflects implemented behavior through TASK-10 and keeps explicit remaining deferrals visible.
+**Status:** Final stabilization plus Pi terminal integration documentation through PI-09; explicit remaining deferrals stay visible.
 **Canonical requirements:** `SPEC.md` section 24 plus security and acceptance criteria sections.  
 **Execution model:** Tests are created alongside implementation by domain workers.
 
@@ -27,6 +27,8 @@ Current valid commands include:
 - `go test ./internal/observability`
 - `go test ./internal/app ./internal/cli`
 - `go test ./internal/tui`
+- `go test ./internal/cli` for Pi launcher and fallback behavior
+- `make pi-ext-check`
 - `go test ./...`
 - `go vet ./...`
 - `go mod verify`
@@ -63,8 +65,9 @@ Additional recommended commands:
 - `make contract`
 - `make smoke`
 - `make ci`
+- `make pi-ext-check`
 
-Recommended commands must not be documented as valid until their files exist.
+Recommended commands must not be documented as valid until their files exist. `make pi-ext-check` is valid and is part of `scripts/release_check.sh`.
 
 `govulncheck` is a required release gate, but it is an external tool availability requirement rather than product behavior. Install it before running the gate, for example with `go install golang.org/x/vuln/cmd/govulncheck@latest`, and ensure the install directory, commonly `$HOME/go/bin`, is on `PATH`. Release checks use the fixed module Go version and workflow pin `1.26.4`; do not suppress vulnerabilities or skip this gate.
 
@@ -482,11 +485,14 @@ Current fixture test command:
 
 ### Terminal TUI
 
-- The TUI must be tested as a client over fake/control-plane service abstractions, not by owning pipeline state.
+- The default interactive terminal surface is Pi; the Bubbletea TUI remains the explicit fallback. Both must be tested as clients over fake/control-plane service abstractions, not by owning pipeline state.
 - Current M13 coverage: `go test ./internal/tui` covers model refresh/update, required view rendering against fake run state, key navigation, disabled/deferred action status, redaction of secret-like event/blocker text, normal quit not cancelling a run, and explicit confirmation before skip/cancel actions invoke the client.
 - Current CLI coverage: `go test ./internal/cli` verifies the `tui` command is registered with the required command tree.
+- Current Pi coverage: `go test ./internal/cli` covers default Pi launch selection, missing-binary guidance, inherited environment construction for `NEXDEV_CONTROL_URL`, `NEXDEV_CONTROL_TOKEN`, `NEXDEV_PROJECT_DIR`, and `NEXDEV_RUN_ID`, source-checkout extension resolution, controlled cache extraction, `--no-pi` Bubbletea fallback selection, and `--no-tui`/JSON non-launch behavior. `make pi-ext-check` runs `npm --prefix extensions/nexdev run check` after dependency install and is included in `scripts/release_check.sh`.
+- Pi extension compile requirements: Pi tested version `0.80.3`, Node `>=22.19.0`, and TypeScript compile through `make pi-ext-check` or `npm --prefix extensions/nexdev run check`.
 - Remaining TUI coverage: live terminal smoke against `nexdev serve`, richer text input for steering/detour/review edits once those service paths exist, and end-to-end remote TUI auth behavior.
-- Web UI remains deferred and has no test surface in M13.
+- Remaining Pi coverage: manual smoke with a locally installed Pi binary for `nexdev`, Ctrl+N or `/nexdev`, menu navigation, overlay focus return, remote auth, and visible control action results. New Run and provider-test overlay UX remain deferred.
+- Web UI remains deferred and has no test surface in M13 or PI-09.
 
 ### Verify and Handoff
 
@@ -505,6 +511,7 @@ PR gate once implementation exists:
 - Unit and integration tests with fake provider.
 - Security fixture tests.
 - SQLite migration tests.
+- Pi extension compile check when Pi integration files change: `make pi-ext-check`.
 
 Nightly/full gate:
 - `go test -race ./...`
@@ -513,10 +520,12 @@ Nightly/full gate:
 - CLI smoke from built binary.
 - SSE replay/slow-client stress tests.
 - Migration tests from seeded legacy state.
+- Pi extension compile check: `make pi-ext-check`.
 
 Release gate:
 - All PR and nightly gates.
 - `go mod verify`.
+- `make pi-ext-check`.
 - Reproducible binary build.
 - Optional SBOM/checksum/signature if distributing binaries.
 - Optional real-provider smoke with env gate and spend cap.
