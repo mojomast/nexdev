@@ -47,16 +47,24 @@ export function startNexdevWidgets(ctx: ExtensionContext): void {
     return;
   }
 
+  let lastStatusText = "";
   const poll = (): void => {
     void client
       .getStatus(pollAbort.signal)
       .then((status) => {
         if (!pollAbort.signal.aborted) {
-          ctx.ui.setStatus(RUN_STATUS_KEY, formatRunStatus(status));
+          lastStatusText = formatRunStatus(status);
+          ctx.ui.setStatus(RUN_STATUS_KEY, lastStatusText);
         }
       })
       .catch((error: unknown) => {
         if (!pollAbort.signal.aborted) {
+          if (isTransientControlPlaneError(error)) {
+            if (lastStatusText === "") {
+              ctx.ui.setStatus(RUN_STATUS_KEY, "Nexdev: connecting to control plane");
+            }
+            return;
+          }
           ctx.ui.setStatus(RUN_STATUS_KEY, safeStatusError(error));
         }
       });
@@ -258,6 +266,10 @@ function safeStatusError(error: unknown): string {
   const redacted = redactUnknown(error);
   const message = redacted instanceof Error ? redacted.message : String(redacted);
   return shorten(`Nexdev: ${redactControlSecrets(message)}`, FOOTER_MAX);
+}
+
+function isTransientControlPlaneError(error: unknown): boolean {
+  return error instanceof NexdevClientError && error.serviceUnavailable && error.status === undefined;
 }
 
 function sanitizeField(value: string): string {
