@@ -14,6 +14,7 @@ import (
 
 const (
 	RealProviderGateEnv     = "NEXDEV_RUN_REAL_PROVIDER_TESTS"
+	OpenRouterSmokeGateEnv  = "NEXDEV_SMOKE_OPENROUTER"
 	RealProviderNameEnv     = "NEXDEV_REAL_PROVIDER"
 	RealProviderModelEnv    = "NEXDEV_REAL_PROVIDER_MODEL"
 	RealProviderAPIKeyEnv   = "NEXDEV_REAL_PROVIDER_API_KEY_ENV"
@@ -51,6 +52,9 @@ func RealProviderSmokeConfigFromEnv() (RealProviderSmokeConfig, error) {
 }
 
 func realProviderSmokeConfigFromLookup(lookup func(string) (string, bool)) (RealProviderSmokeConfig, error) {
+	if value, ok := lookup(OpenRouterSmokeGateEnv); ok && value == "1" {
+		return openRouterSmokeConfigFromLookup(lookup)
+	}
 	if value, ok := lookup(RealProviderGateEnv); !ok || value != "1" {
 		return RealProviderSmokeConfig{}, fmt.Errorf("%w: set %s=1", ErrRealProviderSmokeSkipped, RealProviderGateEnv)
 	}
@@ -94,6 +98,29 @@ func realProviderSmokeConfigFromLookup(lookup func(string) (string, bool)) (Real
 	return RealProviderSmokeConfig{Provider: providerName, Model: model, APIKeyEnv: apiKeyEnv, MaxUSD: maxUSD, Timeout: timeout}, nil
 }
 
+func openRouterSmokeConfigFromLookup(lookup func(string) (string, bool)) (RealProviderSmokeConfig, error) {
+	if key, ok := lookup("OPENROUTER_API_KEY"); !ok || strings.TrimSpace(key) == "" {
+		return RealProviderSmokeConfig{}, fmt.Errorf("%w: credential env OPENROUTER_API_KEY is not set", ErrRealProviderSmokeSkipped)
+	}
+	capText, ok := lookup(RealProviderMaxUSDEnv)
+	if !ok || strings.TrimSpace(capText) == "" {
+		return RealProviderSmokeConfig{}, fmt.Errorf("%w: %s is required", ErrRealProviderSmokeSkipped, RealProviderMaxUSDEnv)
+	}
+	maxUSD, err := strconv.ParseFloat(strings.TrimSpace(capText), 64)
+	if err != nil || maxUSD <= 0 || maxUSD > maxRealSmokeUSD {
+		return RealProviderSmokeConfig{}, fmt.Errorf("%w: %s must be > 0 and <= %.2f", ErrRealProviderSmokeSkipped, RealProviderMaxUSDEnv, maxRealSmokeUSD)
+	}
+	timeout := defaultRealSmokeTimeout
+	if text, ok := lookup(RealProviderTimeoutEnv); ok && strings.TrimSpace(text) != "" {
+		seconds, err := strconv.Atoi(strings.TrimSpace(text))
+		if err != nil || seconds <= 0 || seconds > 30 {
+			return RealProviderSmokeConfig{}, fmt.Errorf("%w: %s must be between 1 and 30 seconds", ErrRealProviderSmokeSkipped, RealProviderTimeoutEnv)
+		}
+		timeout = time.Duration(seconds) * time.Second
+	}
+	return RealProviderSmokeConfig{Provider: "openrouter", Model: "deepseek/deepseek-v4-flash", APIKeyEnv: "OPENROUTER_API_KEY", MaxUSD: maxUSD, Timeout: timeout}, nil
+}
+
 func RunRealProviderSmoke(ctx context.Context, cfg RealProviderSmokeConfig) (*RealProviderSmokeResult, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultRealSmokeTimeout
@@ -104,6 +131,9 @@ func RunRealProviderSmoke(ctx context.Context, cfg RealProviderSmokeConfig) (*Re
 	key := strings.TrimSpace(os.Getenv(cfg.APIKeyEnv))
 	if key == "" {
 		return nil, fmt.Errorf("credential env %s is not set", cfg.APIKeyEnv)
+	}
+	if strings.EqualFold(cfg.Provider, "openrouter") {
+		return runOpenRouterSmoke(ctx, cfg, key)
 	}
 	instance, err := CreateProvider(cfg.Provider)
 	if err != nil {
@@ -145,6 +175,43 @@ func RunRealProviderSmoke(ctx context.Context, cfg RealProviderSmokeConfig) (*Re
 	return &RealProviderSmokeResult{Provider: result.Provider, Model: result.Model, StructuredOK: true, Attempts: result.Attempts, Usage: result.Usage, EstimatedUSD: estimatedUSD}, nil
 }
 
+func runOpenRouterSmoke(ctx context.Context, cfg RealProviderSmokeConfig, key string) (*RealProviderSmokeResult, error) {
+	instance, err := CreateProvider(cfg.Provider)
+	if err != nil {
+		return nil, fmt.Errorf("create provider: %s", safety.RedactSecrets(err.Error()))
+	}
+	if err := instance.Authenticate(key); err != nil {
+		return nil, fmt.Errorf("authenticate provider %q: %s", cfg.Provider, safety.RedactSecrets(err.Error()))
+	}
+	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+
+	models, err := instance.ListModels()
+	if err != nil {
+		return nil, fmt.Errorf("list provider models: %s", safety.RedactSecrets(err.Error()))
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("list provider models: no models returned")
+	}
+	resp, err := instance.Call(ctx, cfg.Model, "say hello")
+	if err != nil {
+		return nil, fmt.Errorf("call provider: %s", safety.RedactSecrets(err.Error()))
+	}
+	if strings.TrimSpace(resp.Content) == "" {
+		return nil, fmt.Errorf("call provider: empty response content")
+	}
+	inputPrice, outputPrice := modelPrices(models, cfg.Model)
+	usage := StructuredUsage{PromptTokens: resp.TokensInput, CompletionTokens: resp.TokensOutput, TotalTokens: resp.TokensInput + resp.TokensOutput, RateLimitRemaining: resp.RateLimitRemaining, QuotaRemaining: resp.QuotaRemaining, RateLimitInfo: resp.RateLimitInfo, QuotaInfo: resp.QuotaInfo}
+	estimatedUSD := resp.Cost
+	if estimatedUSD == 0 {
+		estimatedUSD = estimateUSD(usage, inputPrice, outputPrice)
+	}
+	if estimatedUSD > cfg.MaxUSD {
+		return nil, fmt.Errorf("real provider smoke estimated cost %.6f exceeds cap %.6f", estimatedUSD, cfg.MaxUSD)
+	}
+	return &RealProviderSmokeResult{Provider: resp.Provider, Model: resp.Model, StructuredOK: true, Attempts: 1, Usage: usage, EstimatedUSD: estimatedUSD}, nil
+}
+
 func defaultAPIKeyEnv(providerName string) string {
 	switch strings.ToLower(providerName) {
 	case "anthropic":
@@ -153,6 +220,8 @@ func defaultAPIKeyEnv(providerName string) string {
 		return "OPENAI_API_KEY"
 	case "requesty":
 		return "REQUESTY_API_KEY"
+	case "openrouter":
+		return "OPENROUTER_API_KEY"
 	case "zai":
 		return "ZAI_API_KEY"
 	case "kimi":

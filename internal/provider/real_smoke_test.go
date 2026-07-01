@@ -56,6 +56,21 @@ func TestRealProviderSmokeConfigRejectsUnsafeCapAndTimeout(t *testing.T) {
 	}
 }
 
+func TestOpenRouterSmokeConfigUsesDeepSeekModel(t *testing.T) {
+	env := map[string]string{
+		OpenRouterSmokeGateEnv: "1",
+		RealProviderMaxUSDEnv:  "0.01",
+		"OPENROUTER_API_KEY":   "sk-or-testsecretsecret",
+	}
+	cfg, err := realProviderSmokeConfigFromLookup(mapLookup(env))
+	if err != nil {
+		t.Fatalf("realProviderSmokeConfigFromLookup() error = %v", err)
+	}
+	if cfg.Provider != "openrouter" || cfg.Model != "deepseek/deepseek-v4-flash" || cfg.APIKeyEnv != "OPENROUTER_API_KEY" {
+		t.Fatalf("cfg = %+v", cfg)
+	}
+}
+
 func TestRealProviderSmokeRedactsProviderErrors(t *testing.T) {
 	client := newStructuredTestClient(&scriptedProvider{err: errors.New("request failed Authorization: Bearer sk-real-secretsecret")})
 	var got realSmokeFixture

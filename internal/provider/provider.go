@@ -42,6 +42,7 @@ type Response struct {
 	QuotaRemaining     int
 	RateLimitInfo      *RateLimitInfo
 	QuotaInfo          *QuotaInfo
+	Cost               float64
 }
 
 // RateLimitInfo contains rate limiting information from a provider

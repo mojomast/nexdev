@@ -2,6 +2,8 @@
 
 This repository is controlled by the Nexdev specification and development plan.
 
+Nexdev is a local-first Go coding harness. It owns a staged pipeline, SQLite state, a loopback HTTP/SSE control plane, a provider router, CLI commands, a Bubbletea fallback TUI, and a Pi terminal extension. When `nexdev` runs interactively with no subcommand, Pi is the default terminal surface; Pi is a control-plane client, not the owner of pipeline state.
+
 ## Required Reading Order
 
 Every implementation worker must read these files before editing:
@@ -29,6 +31,102 @@ Precedence order:
 
 If implementation disagrees with `SPEC.md`, the implementation is wrong unless the Spec Management Subagent has updated the spec with orchestrator approval.
 
+## Quick App Map For Pi
+
+Use this map when diagnosing bugs or planning edits:
+- `cmd/nexdev/main.go`: thin binary entrypoint; should not contain business logic.
+- `internal/cli`: Cobra command tree, local/remote command adapters, Pi launcher, fallback TUI command wiring.
+- `internal/app`: runtime/lifecycle wiring for config, state, control-plane, pipeline, executor, providers, and project locks.
+- `internal/controlplane`: HTTP routes, auth roles, SSE/event streaming, MCP adapter, service injection boundaries.
+- `internal/contract`: inert API/event/schema types and validation helpers; no service logic.
+- `internal/state`: SQLite migrations and repositories; source of truth for runs, events, tasks, blockers, artifacts, auth tokens, audit, and cost records.
+- `internal/pipeline`: staged flow from repo analysis through handoff; stages use provider/router abstractions and write artifacts/state.
+- `internal/executor`: task execution bridge, fake worker, pause/resume/skip/cancel/steering handling.
+- `internal/detour`: detour request generation and task splicing.
+- `internal/provider`: provider interface, registry, router, structured wrapper, fake provider, real-provider smoke helpers.
+- `internal/safety`: redaction, path validation, project lock safety, tool/prompt risk controls.
+- `internal/tui`: Bubbletea fallback client; must remain a client over control-plane/service abstractions.
+- `extensions/nexdev`: Pi extension TypeScript client, widgets, menu overlay, steer flow, and DTOs.
+- `api/openapi.yaml`: HTTP machine contract; generated Go types live under `api/generated/` and must not be edited manually.
+- `docs/architecture.md`, `docs/contracts.md`, `docs/TUI.md`, `docs/SETUP.md`: operational summaries; they do not override `SPEC.md`.
+
+## Runtime Flow
+
+Default interactive flow:
+- `nexdev` enters `internal/cli/root.go`.
+- If stdin is a TTY and `--no-pi`, `--no-tui`, and `--json` are not set, `internal/cli/pi.go` launches Pi.
+- The launcher starts or attaches to the loopback control-plane, resolves the Pi extension, and runs `pi --extension <index.ts>` with stdio inherited.
+- The Pi extension reads `NEXDEV_CONTROL_URL`, optional `NEXDEV_CONTROL_TOKEN`, `NEXDEV_PROJECT_DIR`, and optional `NEXDEV_RUN_ID`.
+- If `OPENROUTER_API_KEY` is set, the launcher passes `--provider openrouter --model deepseek/deepseek-v4-flash` to Pi unless `NEXDEV_PI_PROVIDER` or `NEXDEV_PI_MODEL` overrides it.
+- Pi widgets/menu call HTTP endpoints; durable run state remains in Nexdev SQLite/control-plane.
+
+Fallback and headless flow:
+- `nexdev tui` opens the Bubbletea fallback.
+- `nexdev --no-pi` uses Bubbletea in root interactive mode.
+- `nexdev run --no-tui --json ...` is the headless/CI-safe path.
+
+## Control-Plane Endpoint Map
+
+Common Pi/TUI/CLI reads:
+- `GET /status`: overview, footer, current run/task/blockers.
+- `GET /events`: event list/polling.
+- `GET /runs/{run_id}/stream`: SSE stream.
+- `GET /plan`: read-only plan/tasks.
+- `GET /artifacts`: artifact metadata.
+- `GET /providers`: provider list/status when service is wired.
+- `GET /config`: redacted config.
+
+Common mutations:
+- `POST /pause`, `POST /resume`, `POST /skip`, `POST /steer`, `POST /detour`: operator role.
+- `POST /cancel`: admin role.
+- `POST /runs`: operator role, service-dependent; Pi New Run overlay UX is currently deferred.
+
+If a service is not injected, routes may return service-unavailable. UIs should render explicit disabled/deferred states rather than invent behavior.
+
+## Pi Extension Rules
+
+- Pi extension code lives in `extensions/nexdev` and is TypeScript.
+- Pi tested version is `0.80.3`; Node requirement is `>=22.19.0` for extension checks/builds.
+- Compile-check with `make pi-ext-check` or `npm --prefix extensions/nexdev run check`.
+- Pi assistant provider/model defaults can be overridden with `NEXDEV_PI_PROVIDER` and `NEXDEV_PI_MODEL`; do not print provider API key values.
+- `Ctrl+N` opens the Nexdev menu when available; `/nexdev` is the required fallback command.
+- The extension must not register Nexdev control mutations as autonomous model-callable Pi tools.
+- The extension must not expose Nexdev provider credentials as Pi custom providers.
+- `/steer` must use contract-safe source `tui` unless `api/openapi.yaml` changes through an approved contract/spec task.
+- Rendered control-plane text is untrusted; truncate/sanitize and redact before display.
+
+## Provider Rules
+
+All provider calls must go through `internal/provider` and its router/wrapper. Do not call Anthropic, OpenAI, OpenRouter, Ollama, or any provider SDK directly from pipeline stages, executor code, CLI, TUI, Pi extension, or control-plane handlers.
+
+To add or fix a provider:
+- Work inside `internal/provider` only when explicitly assigned.
+- Follow the existing provider interface and registry pattern.
+- Preserve authentication checks, model discovery behavior, usage/cost metadata, redacted errors, and fake-provider testability.
+- Real-provider tests must stay opt-in, env-gated, tiny, spend-capped, and disabled in normal CI.
+
+## Debugging Workflow
+
+When asked to fix something:
+- Reproduce with the smallest command first.
+- Identify the owning package from the app map before editing.
+- Check contract/source-of-truth files before changing behavior.
+- Add or update tests near the changed package.
+- Run the smallest relevant test subset, then broader gates when appropriate.
+- Keep unrelated dirty worktree changes untouched.
+
+Useful focused commands:
+- CLI/Pi launcher: `go test ./internal/cli`.
+- Bubbletea fallback: `go test ./internal/tui`.
+- Control-plane/auth/SSE: `go test ./internal/controlplane`.
+- Contracts/OpenAPI drift: `go test ./internal/contract`.
+- Config/safety: `go test ./internal/config ./internal/safety`.
+- Provider wrapper/registry: `go test ./internal/provider`.
+- Pipeline stages: `go test ./internal/pipeline`.
+- State/migrations: `go test ./internal/state`.
+- Pi extension: `make pi-ext-check`.
+- Fake full smoke: `./scripts/e2e_fake_provider.sh`.
+
 ## Role Discipline
 
 The orchestrator coordinates. Builder subagents implement.
@@ -52,7 +150,7 @@ Builder workers must not:
 
 ## Repository State
 
-At the end of the planning session, this repo is planning-only. It contains `SPEC.md` and planning docs. It is not yet a geoffrussy fork. The first implementation milestone must perform the repository bootstrap decision and preserve these planning artifacts.
+This repository has imported the geoffrussy Go base and now contains Nexdev-specific implementation, contracts, tests, docs, and the Pi terminal extension. Planning artifacts remain authoritative and must be preserved.
 
 ## Safety Rules
 

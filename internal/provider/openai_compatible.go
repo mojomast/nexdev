@@ -2,14 +2,6 @@ package provider
 
 import "time"
 
-// NewOpenRouterProvider creates an OpenRouter provider (OpenAI-compatible API).
-func NewOpenRouterProvider() *OpenAIProvider {
-	p := NewOpenAIProviderWithName("openrouter")
-	p.baseURL = "https://openrouter.ai/api/v1"
-	p.httpClient.Timeout = 120 * time.Second
-	return p
-}
-
 // NewGroqProvider creates a Groq provider (OpenAI-compatible API).
 func NewGroqProvider() *OpenAIProvider {
 	p := NewOpenAIProviderWithName("groq")

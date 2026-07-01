@@ -17,6 +17,7 @@ import (
 
 const piExtensionRelPath = "extensions/nexdev/index.ts"
 const piExtensionCacheVersion = "pi-0.80.3"
+const defaultOpenRouterPiModel = "deepseek/deepseek-v4-flash"
 
 var piExtensionManifest = []string{
 	"index.ts",
@@ -142,7 +143,46 @@ func preparePiLaunch(ctx context.Context) (piLaunchConfig, func(), error) {
 	}
 
 	env := buildPiEnv(os.Environ(), controlBase, effectiveToken(), root, runID)
-	return piLaunchConfig{Binary: binary, Args: []string{"--extension", extensionPath}, Env: env, ControlURL: controlBase, ExtensionPath: extensionPath, ProjectDir: root, RunID: runID}, cleanup, nil
+	args := buildPiArgs(extensionPath, env)
+	return piLaunchConfig{Binary: binary, Args: args, Env: env, ControlURL: controlBase, ExtensionPath: extensionPath, ProjectDir: root, RunID: runID}, cleanup, nil
+}
+
+func buildPiArgs(extensionPath string, env []string) []string {
+	args := []string{"--extension", extensionPath}
+	provider, model := resolvePiProviderModel(env)
+	if provider != "" {
+		args = append(args, "--provider", provider)
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	return args
+}
+
+func resolvePiProviderModel(env []string) (string, string) {
+	provider := firstEnvValue(env, "NEXDEV_PI_PROVIDER", "PI_PROVIDER")
+	model := firstEnvValue(env, "NEXDEV_PI_MODEL", "PI_MODEL", "OPENROUTER_MODEL")
+	if provider == "" && firstEnvValue(env, "OPENROUTER_API_KEY") != "" {
+		provider = "openrouter"
+	}
+	if provider == "openrouter" && model == "" {
+		model = defaultOpenRouterPiModel
+	}
+	return provider, model
+}
+
+func firstEnvValue(env []string, keys ...string) string {
+	for _, key := range keys {
+		prefix := key + "="
+		for _, item := range env {
+			if strings.HasPrefix(item, prefix) {
+				if value := strings.TrimSpace(strings.TrimPrefix(item, prefix)); value != "" {
+					return value
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func buildPiEnv(base []string, controlBase, token, projectRoot, runID string) []string {

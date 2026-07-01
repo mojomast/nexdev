@@ -43,7 +43,28 @@ func TestBuildPiEnv(t *testing.T) {
 	}
 }
 
+func TestBuildPiArgsDefaultsToOpenRouterDeepSeekWhenKeyIsSet(t *testing.T) {
+	args := buildPiArgs("/tmp/index.ts", []string{"OPENROUTER_API_KEY=secret"})
+	want := []string{"--extension", "/tmp/index.ts", "--provider", "openrouter", "--model", defaultOpenRouterPiModel}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestBuildPiArgsAllowsProviderModelOverrides(t *testing.T) {
+	args := buildPiArgs("/tmp/index.ts", []string{
+		"OPENROUTER_API_KEY=secret",
+		"NEXDEV_PI_PROVIDER=openrouter",
+		"NEXDEV_PI_MODEL=deepseek/deepseek-v4-pro",
+	})
+	want := []string{"--extension", "/tmp/index.ts", "--provider", "openrouter", "--model", "deepseek/deepseek-v4-pro"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func TestLaunchPiDefaultUsesExtensionAndInheritedConfig(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "")
 	oldLookPath, oldRun, oldProjectDir, oldControlURL, oldToken, oldCacheDir := lookPathBinary, runPiProcess, projectDir, controlURL, controlToken, userCacheDir
 	defer func() {
 		lookPathBinary, runPiProcess = oldLookPath, oldRun

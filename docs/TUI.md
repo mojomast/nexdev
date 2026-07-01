@@ -26,6 +26,11 @@ Requirements:
 - Pi tested version: 0.80.3.
 - Node: >=22.19.0 for extension checks/builds.
 
+Provider selection:
+- If `OPENROUTER_API_KEY` is set, Nexdev passes `--provider openrouter --model deepseek/deepseek-v4-flash` to Pi by default.
+- Override with `NEXDEV_PI_PROVIDER` and `NEXDEV_PI_MODEL`, for example `NEXDEV_PI_MODEL=deepseek/deepseek-v4-pro`.
+- Nexdev provider credentials are still not bridged into Pi custom-provider config; Pi reads its own provider env vars such as `OPENROUTER_API_KEY`.
+
 Pi extension UI:
 - Welcome banner above the editor.
 - One-line status footer with run, status, stage, task, and cost when available.

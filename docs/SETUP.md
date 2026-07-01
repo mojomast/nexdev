@@ -62,6 +62,8 @@ Pi launcher environment:
 - `NEXDEV_CONTROL_TOKEN` is passed only when configured through `--token` or the environment.
 - `NEXDEV_PROJECT_DIR` identifies the project root.
 - `NEXDEV_RUN_ID` is set when a latest run is known.
+- `NEXDEV_PI_PROVIDER` and `NEXDEV_PI_MODEL` optionally override the Pi assistant provider/model passed to `pi`.
+- When `OPENROUTER_API_KEY` is set and no explicit Pi provider/model override is present, Nexdev launches Pi with OpenRouter and `deepseek/deepseek-v4-flash`.
 
 The launcher does not pass provider API keys to Pi or expose Nexdev providers as Pi custom providers.
 

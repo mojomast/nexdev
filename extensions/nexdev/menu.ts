@@ -51,7 +51,7 @@ interface ConfirmUI {
 }
 
 interface NotifyUI {
-  notify(message: string, level?: "info" | "success" | "warning" | "error"): void;
+  notify(message: string, level?: "info" | "warning" | "error"): void;
 }
 
 const OVERLAY_WIDTH = 86;
@@ -396,10 +396,10 @@ class NexdevMenuComponent {
           const request = { run_id: run.run_id, reason: "operator control from Pi overlay" };
           if (isPausedOrBlocked(run.status)) {
             await client.resume(request);
-            this.notify("Nexdev run resumed.", "success");
+            this.notify("Nexdev run resumed.", "info");
           } else {
             await client.pause(request);
-            this.notify("Nexdev run paused.", "success");
+            this.notify("Nexdev run paused.", "info");
           }
           return;
         }
@@ -413,7 +413,7 @@ class NexdevMenuComponent {
             return;
           }
           await client.skip({ run_id: run.run_id, task_id: taskID, reason: "operator skip from Pi overlay" });
-          this.notify(`Skipped task ${taskID}.`, "success");
+          this.notify(`Skipped task ${taskID}.`, "info");
           return;
         }
         case "cancel": {
@@ -425,7 +425,7 @@ class NexdevMenuComponent {
             return;
           }
           await client.cancel({ run_id: run.run_id, reason: "operator cancel from Pi overlay" });
-          this.notify("Nexdev run cancel requested.", "success");
+          this.notify("Nexdev run cancel requested.", "info");
           return;
         }
         case "detour": {
@@ -449,7 +449,7 @@ class NexdevMenuComponent {
             reason,
             context: blockerSummary === "" ? `Pi operator detour for ${taskID}` : blockerSummary,
           });
-          this.notify(`Detour requested for ${taskID}.`, "success");
+          this.notify(`Detour requested for ${taskID}.`, "info");
           return;
         }
       }
@@ -469,7 +469,7 @@ class NexdevMenuComponent {
     return false;
   }
 
-  private notify(message: string, level: "info" | "success" | "warning" | "error"): void {
+  private notify(message: string, level: "info" | "warning" | "error"): void {
     const ui = this.ctx.ui as unknown;
     const safe = truncate(formatMessage(message), 240);
     if (hasNotify(ui)) {
@@ -482,11 +482,11 @@ class NexdevMenuComponent {
   }
 
   private color(name: "accent" | "border" | "dim" | "text", value: string): string {
-    const colorer = this.theme.fg as unknown;
-    if (typeof colorer !== "function") {
+    const theme = this.theme as unknown as { fg?: (name: string, value: string) => string };
+    if (typeof theme.fg !== "function") {
       return value;
     }
-    return (colorer as (name: string, value: string) => string)(name, value);
+    return theme.fg(name, value);
   }
 }
 

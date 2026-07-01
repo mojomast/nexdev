@@ -163,6 +163,7 @@ func defaultProviderStages() map[string]ProviderSelection {
 func LoadNexdevYAML(data []byte) (NexdevConfig, error) {
 	cfg := DefaultNexdevConfig()
 	if len(bytes.TrimSpace(data)) == 0 {
+		applyProviderAPIKeyEnvDefaults(&cfg)
 		return cfg, nil
 	}
 	if err := rejectUnknownTopLevelKeys(data); err != nil {
@@ -171,7 +172,41 @@ func LoadNexdevYAML(data []byte) (NexdevConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse nexdev config: %w", err)
 	}
+	applyProviderAPIKeyEnvDefaults(&cfg)
 	return cfg, cfg.Validate()
+}
+
+func applyProviderAPIKeyEnvDefaults(cfg *NexdevConfig) {
+	if cfg.Provider.Primary.APIKeyEnv == "" {
+		cfg.Provider.Primary.APIKeyEnv = ProviderAPIKeyEnv(cfg.Provider.Primary.Name)
+	}
+	for name, selection := range cfg.Provider.Stages {
+		if selection.APIKeyEnv == "" {
+			selection.APIKeyEnv = ProviderAPIKeyEnv(selection.Name)
+			cfg.Provider.Stages[name] = selection
+		}
+	}
+}
+
+func ProviderAPIKeyEnv(providerName string) string {
+	switch strings.ToLower(strings.TrimSpace(providerName)) {
+	case "anthropic":
+		return "ANTHROPIC_API_KEY"
+	case "openai", "openai-codex":
+		return "OPENAI_API_KEY"
+	case "requesty":
+		return "REQUESTY_API_KEY"
+	case "openrouter":
+		return "OPENROUTER_API_KEY"
+	case "zai":
+		return "ZAI_API_KEY"
+	case "kimi":
+		return "KIMI_API_KEY"
+	case "ollama":
+		return "OLLAMA_API_KEY"
+	default:
+		return ""
+	}
 }
 
 func (c NexdevConfig) Validate() error {
